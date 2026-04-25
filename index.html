@@ -602,6 +602,8 @@ function switchGuestTab(tab) {
   if (tab==='menu') renderGuestMenu();
 }
 
+let guestMenuActiveGroup = 'all';
+
 async function renderGuestMenu() {
   const area = document.getElementById('guest-menu-content');
   if (!area) return;
@@ -621,39 +623,69 @@ async function renderGuestMenu() {
       return;
     }
   }
+  if (!groups.length) { area.innerHTML = '<div class="empty">Chưa có menu</div>'; return; }
+  guestMenuActiveGroup = 'all';
+  renderGuestMenuContent();
+}
+
+function renderGuestMenuContent() {
+  const area = document.getElementById('guest-menu-content');
+  if (!area) return;
 
   const toppingGroup = groups.find(g=>(g.name||'').toLowerCase()==='topping');
   const displayGroups = groups.filter(g=>(g.name||'').toLowerCase()!=='topping');
+  const allGroups = [...displayGroups, ...(toppingGroup ? [toppingGroup] : [])];
 
-  if (!displayGroups.length) {
-    area.innerHTML = '<div class="empty">Chưa có menu</div>';
-    return;
-  }
+  // Tab bar dùng CSS class .tab
+  const tabsHtml = `
+    <div style="display:flex;gap:6px;overflow-x:auto;padding-bottom:10px;margin-bottom:14px;scrollbar-width:none;-webkit-overflow-scrolling:touch">
+      <div class="tab ${guestMenuActiveGroup==='all'?'active':''}" onclick="switchGuestMenuGroup('all')" id="gmt-all" style="flex-shrink:0">
+        Tất cả
+      </div>
+      ${allGroups.map(g=>`
+        <div class="tab ${guestMenuActiveGroup===g.id?'active':''}" onclick="switchGuestMenuGroup('${g.id}')" id="gmt-${g.id}" style="flex-shrink:0">
+          ${(g.name||'').toLowerCase()==='topping'?'🫧 ':''} ${g.name}
+        </div>`).join('')}
+    </div>`;
 
-  area.innerHTML = displayGroups.map(g => {
+  // Lọc nhóm hiển thị
+  const filtered = guestMenuActiveGroup === 'all' ? allGroups
+    : allGroups.filter(g => g.id === guestMenuActiveGroup);
+
+  const contentHtml = filtered.map(g => {
+    const isTopping = (g.name||'').toLowerCase() === 'topping';
     const gItems = items.filter(i=>i.groupId===g.id);
-    // Nhóm theo tên để hiện folder size
     const byName = {};
     gItems.forEach(it=>{ if(!byName[it.name]) byName[it.name]=[]; byName[it.name].push(it); });
 
-    return `<div style="margin-bottom:16px">
-      <div style="font-size:16px;font-weight:700;color:var(--accent);padding:10px 0 6px;border-bottom:2px solid var(--accent);margin-bottom:10px">
-        ${g.name}
+    if (isTopping) {
+      return `<div style="margin-bottom:20px">
+        <div style="font-size:16px;font-weight:700;color:var(--accent);padding:8px 0 6px;border-bottom:2px solid var(--accent);margin-bottom:10px">🫧 Topping</div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px">
+          ${gItems.map(t=>`
+            <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:6px 14px;font-size:13px">
+              ${escapeHTML(t.name)} <span style="color:var(--accent);font-weight:600">+${fmtMoney(t.price)}</span>
+            </div>`).join('')}
+        </div>
+      </div>`;
+    }
+
+    return `<div style="margin-bottom:20px">
+      <div style="font-size:16px;font-weight:700;color:var(--accent);padding:8px 0 6px;border-bottom:2px solid var(--accent);margin-bottom:10px">
+        ${escapeHTML(g.name)}
       </div>
       ${Object.entries(byName).length ? Object.entries(byName).map(([name, sizes])=>{
         if (sizes.length===1 && !sizes[0].size) {
-          // Món không có size
-          return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 4px;border-bottom:1px solid var(--border)">
+          return `<div style="display:flex;justify-content:space-between;align-items:center;padding:10px 4px;border-bottom:1px solid var(--border)">
             <span style="font-size:14px;font-weight:500">${escapeHTML(name)}</span>
             <span style="color:var(--accent);font-weight:700">${fmtMoney(sizes[0].price)}</span>
           </div>`;
         }
-        // Món có nhiều size
-        return `<div style="padding:8px 4px;border-bottom:1px solid var(--border)">
-          <div style="font-size:14px;font-weight:600;margin-bottom:6px">${escapeHTML(name)}</div>
-          <div style="display:flex;flex-wrap:wrap;gap:6px;padding-left:10px">
+        return `<div style="padding:10px 4px;border-bottom:1px solid var(--border)">
+          <div style="font-size:14px;font-weight:600;margin-bottom:8px">${escapeHTML(name)}</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;padding-left:8px">
             ${sizes.map(s=>`
-              <div style="display:flex;gap:8px;align-items:center;background:var(--surface2);border-radius:6px;padding:4px 10px;font-size:13px">
+              <div style="display:flex;gap:8px;align-items:center;background:var(--surface2);border-radius:6px;padding:5px 12px;font-size:13px">
                 <span style="color:var(--text2)">${escapeHTML(s.size||'Thường')}</span>
                 <span style="color:var(--accent);font-weight:600">${fmtMoney(s.price)}</span>
               </div>`).join('')}
@@ -663,23 +695,15 @@ async function renderGuestMenu() {
     </div>`;
   }).join('');
 
-  // Hiện topping nếu có
-  if (toppingGroup) {
-    const tItems = items.filter(i=>i.groupId===toppingGroup.id);
-    if (tItems.length) {
-      area.innerHTML += `<div style="margin-bottom:16px">
-        <div style="font-size:16px;font-weight:700;color:var(--accent);padding:10px 0 6px;border-bottom:2px solid var(--accent);margin-bottom:10px">
-          🫧 Topping
-        </div>
-        <div style="display:flex;flex-wrap:wrap;gap:8px">
-          ${tItems.map(t=>`
-            <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:6px 14px;font-size:13px">
-              ${escapeHTML(t.name)} <span style="color:var(--accent);font-weight:600">+${fmtMoney(t.price)}</span>
-            </div>`).join('')}
-        </div>
-      </div>`;
-    }
-  }
+  area.innerHTML = tabsHtml + contentHtml;
+}
+
+function switchGuestMenuGroup(groupId) {
+  guestMenuActiveGroup = groupId;
+  renderGuestMenuContent();
+  // Scroll lên đầu khi đổi tab
+  const area = document.getElementById('guest-tab-menu');
+  if (area) area.scrollTop = 0;
 }
 
 // ═══════════ GUEST PAGE ═══════════
@@ -1721,8 +1745,9 @@ function openMenuModal() {
   openModal(`
     <div class="modal modal-lg" onclick="event.stopPropagation()" style="display:flex;flex-direction:column;max-height:90vh">
       <div class="modal-title" style="flex-shrink:0"><h3>Chọn món – Bàn ${currentTableId.replace('t','')}</h3><button class="modal-close" onclick="cancelMenuModal()">✕</button></div>
-      <div class="tabs" id="menu-modal-tabs" style="flex-shrink:0">
-        ${nonToppingGroups.map((g,i)=>`<div class="tab ${i===0?'active':''}" onclick="switchMenuGroup('${g.id}',this)">${g.name}</div>`).join('')}
+      <div class="tabs" id="menu-modal-tabs" style="flex-shrink:0;overflow-x:auto;flex-wrap:nowrap;display:flex">
+        <div class="tab active" onclick="switchMenuGroup('all',this)">Tất cả</div>
+        ${nonToppingGroups.map(g=>`<div class="tab" onclick="switchMenuGroup('${g.id}',this)">${g.name}</div>`).join('')}
       </div>
       <div style="flex:1;overflow-y:auto;margin-bottom:10px">
         <div id="menu-modal-items"></div>
@@ -1747,7 +1772,7 @@ function openMenuModal() {
         </div>
       </div>
     </div>`);
-  switchMenuGroup(nonToppingGroups[0].id, null);
+  switchMenuGroup('all', null);
   renderCartDraft();
 }
 
@@ -1765,16 +1790,24 @@ function switchMenuGroup(gid, tabEl) {
     document.querySelectorAll('#menu-modal-tabs .tab').forEach(t=>t.classList.remove('active'));
     tabEl.classList.add('active');
   }
-  const gItems = items.filter(i=>i.groupId===gid);
+  const toppingGroupId = groups.find(g=>g.name&&g.name.toLowerCase()==='topping')?.id;
+  // Nếu gid = 'all' → lấy tất cả món không phải topping
+  const gItems = gid === 'all'
+    ? items.filter(i => i.groupId !== toppingGroupId)
+    : items.filter(i => i.groupId === gid);
+
   const area = document.getElementById('menu-modal-items');
   if (!area) return;
-  if (!gItems.length) { area.innerHTML='<div class="empty">Nhóm chưa có món</div>'; return; }
+  if (!gItems.length) { area.innerHTML='<div class="empty">Chưa có món</div>'; return; }
 
+  // Nhóm theo tên (để hiển thị size)
   const byName = {};
   gItems.forEach(it=>{ if (!byName[it.name]) byName[it.name]=[]; byName[it.name].push(it); });
 
   area.innerHTML = `<div class="menu-grid">
     ${Object.entries(byName).map(([name, sizes])=>{
+      // Lấy groupId của item này (dùng cho size picker)
+      const itemGid = sizes[0].groupId;
       if (sizes.length===1) {
         const it = sizes[0];
         return `<div class="mi" onclick="handleMenuItemClick('${it.id}')">
@@ -1783,7 +1816,7 @@ function switchMenuGroup(gid, tabEl) {
           <div class="mi-price">${fmtMoney(it.price)}</div>
         </div>`;
       }
-      return `<div class="mi" onclick="openSizePickerByName('${gid}','${safeId(name)}','${encodeURIComponent(name)}')">
+      return `<div class="mi" onclick="openSizePickerByName('${itemGid}','${safeId(name)}','${encodeURIComponent(name)}')">
         <div class="mi-name">${name}</div>
         <div class="mi-size">${sizes.length} sizes</div>
         <div class="mi-price">${fmtMoney(Math.min(...sizes.map(s=>s.price)))}+</div>
