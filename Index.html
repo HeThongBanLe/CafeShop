@@ -1,0 +1,2285 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>CaféShop POS</title>
+
+<script type="module">
+import { initializeApp, getApps } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, updatePassword, updateEmail }
+  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
+import { getFirestore, collection, doc, setDoc, getDoc, getDocs, addDoc, updateDoc, deleteDoc, onSnapshot, serverTimestamp, query, orderBy, where, Timestamp }
+  from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
+
+const firebaseConfig = {
+  apiKey: "AIzaSyCvo70FjlePnBd7I6O1xFY5v_XK62oBdWE",
+  authDomain: "cafeshop-be3a1.firebaseapp.com",
+  projectId: "cafeshop-be3a1",
+  storageBucket: "cafeshop-be3a1.firebasestorage.app",
+  messagingSenderId: "1048804844121",
+  appId: "1:1048804844121:web:e5e9231284d5067a104748",
+  measurementId: "G-D0CQN675BS"
+};
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+window._app = app; window._auth = auth; window._db = db;
+window._firebase = { initializeApp, getApps, getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged, updatePassword, updateEmail,
+  collection, doc, setDoc, getDoc, getDocs, addDoc, updateDoc, deleteDoc, onSnapshot, serverTimestamp, query, orderBy, where, Timestamp };
+window.dispatchEvent(new Event('firebase-ready'));
+</script>
+
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+
+<style>
+:root {
+  --accent: #c9a84c;
+  --accent2: #e8c96a;
+  --bg: #0f0d0b;
+  --surface: #1a1714;
+  --surface2: #231f1b;
+  --surface3: #2e2924;
+  --border: #3a332c;
+  --cream: #f5ead8;
+  --text: #f0e6d3;
+  --text2: #b0a090;
+  --text3: #6b5f52;
+  --red: #e05a4e;
+  --green: #5aab7a;
+  --blue: #5a8fc9;
+  --r: 12px;
+  --sh: 0 4px 24px rgba(0,0,0,.4);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'DM Sans',sans-serif;background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
+h1,h2,h3{font-family:'Playfair Display',serif}
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+
+/* TOAST */
+#toast-wrap{position:fixed;bottom:16px;right:16px;z-index:9999;display:flex;flex-direction:column;gap:6px;pointer-events:none}
+.toast{background:var(--surface2);border:1px solid var(--border);border-left:4px solid var(--accent);padding:10px 14px;border-radius:8px;font-size:13px;max-width:300px;animation:tslide .3s ease;pointer-events:auto}
+.toast.err{border-left-color:var(--red)}.toast.ok{border-left-color:var(--green)}.toast.info{border-left-color:var(--blue)}
+@keyframes tslide{from{transform:translateX(110%);opacity:0}to{transform:translateX(0);opacity:1}}
+
+/* NOTIFICATION CORNER */
+#notif-wrap{position:fixed;bottom:70px;left:16px;z-index:9998;display:flex;flex-direction:column;gap:6px;pointer-events:none}
+.notif{background:var(--surface);border:1px solid var(--accent);border-radius:10px;padding:10px 14px;font-size:13px;max-width:260px;animation:tslide .3s ease;box-shadow:var(--sh)}
+.notif .notif-title{font-weight:700;color:var(--accent);font-size:12px;margin-bottom:2px}
+
+/* BUTTONS */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:9px 16px;border:none;border-radius:8px;font-family:'DM Sans',sans-serif;font-size:13px;font-weight:600;cursor:pointer;transition:all .2s;white-space:nowrap}
+.btn:active{transform:scale(.97)}
+.btn-full{width:100%}
+.btn-gold{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#1a1000}
+.btn-gold:hover{filter:brightness(1.1)}
+.btn-outline{background:transparent;color:var(--text2);border:1px solid var(--border)}
+.btn-outline:hover{border-color:var(--accent);color:var(--accent)}
+.btn-red{background:var(--red);color:#fff}.btn-red:hover{filter:brightness(1.1)}
+.btn-green{background:var(--green);color:#fff}.btn-green:hover{filter:brightness(1.1)}
+.btn-blue{background:var(--blue);color:#fff}.btn-blue:hover{filter:brightness(1.1)}
+.btn-ghost{background:var(--surface2);color:var(--text2);border:1px solid var(--border)}
+.btn-ghost:hover{color:var(--text)}
+.btn-sm{padding:6px 12px;font-size:12px}
+.btn-xs{padding:4px 8px;font-size:11px;border-radius:5px}
+.btn-icon{width:32px;height:32px;padding:0;border-radius:6px}
+
+/* INPUTS */
+.field{margin-bottom:14px}
+.field label{display:block;font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:5px}
+.inp{width:100%;background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--text);font-size:14px;outline:none;transition:border .2s;font-family:inherit}
+.inp:focus{border-color:var(--accent)}
+.inp-sm{padding:6px 10px;font-size:13px}
+select.inp option{background:var(--surface2)}
+.input-row{display:flex;gap:8px}
+.input-row .field{flex:1}
+
+/* LOGIN */
+#login-screen{min-height:100vh;display:flex;align-items:center;justify-content:center;background:radial-gradient(ellipse at 30% 50%,#2a1f0e,#0f0d0b)}
+.login-box{background:var(--surface);border:1px solid var(--border);border-radius:20px;padding:40px 36px;width:360px;box-shadow:var(--sh)}
+.login-logo{text-align:center;margin-bottom:28px}
+.login-logo h1{font-size:30px;color:var(--accent)}
+.login-logo p{font-size:11px;color:var(--text3);letter-spacing:4px;text-transform:uppercase;margin-top:4px}
+.login-suffix{position:absolute;right:10px;top:50%;transform:translateY(-50%);color:var(--text3);font-size:12px;pointer-events:none}
+.login-or{text-align:center;color:var(--text3);font-size:12px;margin:14px 0;position:relative}
+.login-or::before,.login-or::after{content:'';position:absolute;top:50%;width:42%;height:1px;background:var(--border)}
+.login-or::before{left:0}.login-or::after{right:0}
+
+/* GUEST PAGE */
+#guest-screen{min-height:100vh;display:none}
+.guest-header{background:var(--surface);border-bottom:1px solid var(--border);padding:16px 20px;display:flex;align-items:center;gap:12px}
+.guest-header h2{font-size:20px;color:var(--accent);flex:1}
+.guest-body{padding:20px}
+.guest-info{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:16px;font-size:13px;color:var(--text2)}
+.guest-tables-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:10px}
+.guest-table{background:var(--surface2);border:2px solid var(--border);border-radius:10px;padding:14px 10px;text-align:center;cursor:pointer;transition:all .2s}
+.guest-table:hover{border-color:var(--accent);transform:translateY(-2px)}
+.guest-table.occupied{border-color:var(--green);background:#0a1f12}
+.guest-table .tnum{font-size:24px;font-weight:700;color:var(--text);font-family:'Playfair Display',serif}
+.guest-table .tstatus{font-size:11px;color:var(--text3);margin-top:3px}
+
+/* APP LAYOUT */
+#app{display:none;min-height:100vh}
+.sidebar{position:fixed;left:0;top:0;bottom:0;width:220px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;z-index:100;transition:transform .3s}
+.sidebar-logo{padding:20px 18px 16px;border-bottom:1px solid var(--border)}
+.sidebar-logo h2{font-size:20px;color:var(--accent)}
+.sidebar-logo p{font-size:11px;color:var(--text3);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.nav-item{display:flex;align-items:center;gap:10px;padding:12px 18px;cursor:pointer;color:var(--text2);transition:all .2s;border-left:3px solid transparent;font-size:13px;font-weight:500}
+.nav-item:hover{background:var(--surface2);color:var(--text)}
+.nav-item.active{background:var(--surface2);color:var(--accent);border-left-color:var(--accent)}
+.nav-icon{font-size:17px;width:20px;text-align:center}
+.sidebar-bottom{margin-top:auto;padding:14px 18px;border-top:1px solid var(--border);display:flex;align-items:center;gap:8px}
+.avatar{width:34px;height:34px;border-radius:50%;background:linear-gradient(135deg,var(--accent),#8b6914);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;color:#1a1000;flex-shrink:0}
+.user-info{flex:1;min-width:0}
+.user-name{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.user-role{font-size:10px;color:var(--text3)}
+.logout-btn{background:none;border:none;color:var(--text3);cursor:pointer;font-size:18px;padding:4px}
+.logout-btn:hover{color:var(--red)}
+.main{margin-left:220px;padding:22px;min-height:100vh;transition:margin .3s}
+.hamburger{display:none;position:fixed;top:10px;left:10px;z-index:300;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:7px 10px;cursor:pointer;font-size:20px}
+.backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:99}
+
+/* PAGE */
+.ph{display:flex;align-items:center;justify-content:space-between;margin-bottom:20px;flex-wrap:wrap;gap:10px}
+.ph-title{font-size:24px;color:var(--cream)}
+.ph-sub{font-size:12px;color:var(--text3);margin-top:2px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:18px;margin-bottom:14px}
+.card-title{font-size:15px;font-weight:600;color:var(--cream);margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.card-title-left{display:flex;align-items:center;gap:8px}
+
+/* TABLE */
+.tbl-wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse}
+th{text-align:left;padding:8px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);border-bottom:1px solid var(--border)}
+td{padding:9px 12px;border-bottom:1px solid var(--border);font-size:13px;color:var(--text)}
+tr:last-child td{border-bottom:none}
+tbody tr:hover td{background:rgba(255,255,255,.02)}
+
+/* TAGS */
+.tag{display:inline-block;padding:2px 9px;border-radius:20px;font-size:11px;font-weight:600}
+.tag-gold{background:#2a2010;color:var(--accent);border:1px solid #4a3a18}
+.tag-green{background:#0f2a1a;color:var(--green);border:1px solid #1a4a2a}
+.tag-blue{background:#0f1e2a;color:var(--blue);border:1px solid #1a304a}
+.tag-red{background:#2a0f0e;color:var(--red);border:1px solid #4a1e1a}
+
+/* MODAL */
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:500;display:flex;align-items:center;justify-content:center;padding:14px;backdrop-filter:blur(4px)}
+.modal{background:var(--surface);border:1px solid var(--border);border-radius:16px;padding:24px;width:100%;max-width:500px;max-height:90vh;overflow-y:auto;box-shadow:var(--sh)}
+.modal-lg{max-width:680px}
+.modal-title{font-size:18px;color:var(--cream);margin-bottom:18px;display:flex;align-items:center;justify-content:space-between}
+.modal-close{background:none;border:none;color:var(--text3);cursor:pointer;font-size:20px}
+.modal-close:hover{color:var(--red)}
+.modal-footer{display:flex;gap:8px;justify-content:flex-end;margin-top:18px}
+
+/* TABS */
+.tabs{display:flex;gap:4px;margin-bottom:16px;flex-wrap:wrap}
+.tab{padding:7px 16px;border-radius:7px;cursor:pointer;font-size:12px;font-weight:500;color:var(--text2);border:1px solid var(--border);transition:all .2s}
+.tab.active{background:var(--accent);color:#1a1000;border-color:var(--accent)}
+.tab:hover:not(.active){border-color:var(--accent);color:var(--accent)}
+
+/* COLOR PICKER */
+.color-swatches{display:flex;flex-wrap:wrap;gap:10px;margin-top:8px}
+.swatch{width:34px;height:34px;border-radius:50%;cursor:pointer;border:3px solid transparent;transition:all .2s}
+.swatch.active{border-color:var(--text);transform:scale(1.15)}
+.theme-card{cursor:pointer;border:2px solid var(--border);border-radius:10px;padding:8px;transition:all .2s;width:90px;text-align:center}
+.theme-card:hover{transform:translateY(-2px)}
+.theme-card.active{border-color:var(--accent);box-shadow:0 0 0 2px var(--accent)}
+.theme-preview{width:100%;height:42px;border-radius:6px;border:1px solid;padding:5px;display:flex;flex-direction:column;justify-content:center}
+.theme-name{font-size:11px;font-weight:600;margin-top:6px}
+
+/* STATS */
+.stats-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-bottom:20px}
+.stat{background:var(--surface);border:1px solid var(--border);border-radius:var(--r);padding:16px}
+.stat-label{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.8px}
+.stat-val{font-size:26px;font-weight:700;color:var(--cream);margin-top:4px}
+.stat-sub{font-size:11px;color:var(--text3);margin-top:3px}
+
+/* POS TABLES */
+.pos-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px}
+.t-card{background:var(--surface2);border:2px solid var(--border);border-radius:10px;padding:14px 10px;text-align:center;cursor:pointer;transition:all .2s;position:relative;min-height:95px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;user-select:none}
+.t-card:hover{border-color:var(--accent);transform:translateY(-2px)}
+.t-card.occupied{border-color:var(--green);background:#0a1f12}
+.t-card.selected{box-shadow:0 0 0 3px rgba(201,168,76,.35);border-color:var(--accent2)}
+.t-card .tnum{font-size:22px;font-weight:700;font-family:'Playfair Display',serif}
+.t-card .tstatus{font-size:10px;color:var(--text3)}
+.t-card .tamount{font-size:12px;color:var(--green);font-weight:600}
+.t-card .tstaff{font-size:10px;color:var(--text3);max-width:100px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+/* ORDER PANEL */
+.order-panel{position:fixed;right:0;top:0;bottom:0;width:340px;background:var(--surface);border-left:1px solid var(--border);display:flex;flex-direction:column;z-index:200;transform:translateX(100%);transition:transform .3s}
+.order-panel.open{transform:translateX(0)}
+.op-head{padding:14px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px}
+.op-title{font-size:17px;font-weight:700;flex:1}
+.op-body{flex:1;overflow-y:auto;padding:10px}
+.oi{background:var(--surface2);border-radius:8px;padding:9px 11px;margin-bottom:7px;display:flex;align-items:flex-start;gap:8px}
+.oi-info{flex:1;min-width:0}
+.oi-name{font-size:13px;font-weight:600}
+.oi-meta{font-size:11px;color:var(--text3);margin-top:2px}
+.oi-right{display:flex;flex-direction:column;align-items:flex-end;gap:4px}
+.oi-price{font-size:13px;color:var(--accent);font-weight:600;white-space:nowrap}
+.qty-ctrl{display:flex;align-items:center;gap:5px}
+.qty-btn{width:24px;height:24px;border-radius:50%;border:1px solid var(--border);background:var(--surface3);color:var(--text);cursor:pointer;font-size:14px;display:flex;align-items:center;justify-content:center;transition:all .2s}
+.qty-btn:hover{border-color:var(--accent);color:var(--accent)}
+.qty-num{font-size:13px;font-weight:700;min-width:18px;text-align:center}
+.qty-badge{display:inline-block;background:var(--accent);color:#1a1000;border-radius:10px;font-size:10px;font-weight:700;padding:1px 6px;margin-left:4px}
+.op-foot{padding:14px;border-top:1px solid var(--border)}
+.total-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+.total-label{font-size:13px;color:var(--text2)}
+.total-amt{font-size:20px;font-weight:700;color:var(--accent2)}
+.op-actions{display:flex;gap:6px}
+
+/* MENU MODAL */
+.menu-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;margin-top:10px}
+.mi{background:var(--surface2);border:1px solid var(--border);border-radius:9px;padding:10px 8px;cursor:pointer;text-align:center;transition:all .2s}
+.mi:hover{border-color:var(--accent);transform:translateY(-2px)}
+.mi-name{font-size:12px;font-weight:600;margin-bottom:2px}
+.mi-size{font-size:10px;color:var(--text3)}
+.mi-price{font-size:12px;color:var(--accent)}
+
+/* FOLDER TREE */
+.folder{margin-bottom:10px}
+.folder-head{display:flex;align-items:center;gap:8px;padding:9px 12px;background:var(--surface2);border-radius:8px;cursor:pointer;font-weight:600;font-size:13px;user-select:none;border:1px solid var(--border)}
+.folder-head:hover{border-color:var(--accent)}
+.folder-arrow{transition:transform .2s;font-size:11px}
+.folder-body{padding:6px 0 0 16px;display:none}
+.folder-body.open{display:block}
+.folder-item{display:flex;align-items:center;justify-content:space-between;padding:7px 12px;border-radius:7px;margin-bottom:4px;background:var(--surface);border:1px solid var(--border)}
+.sub-folder{margin-bottom:6px}
+.sub-folder-head{display:flex;align-items:center;gap:6px;padding:6px 10px;background:var(--surface3);border-radius:7px;cursor:pointer;font-size:12px;font-weight:600;border:1px solid var(--border)}
+.sub-folder-body{padding:4px 0 0 14px;display:none}
+.sub-folder-body.open{display:block}
+
+/* TOPPING */
+.topping-wrap{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0}
+.tchip{padding:5px 12px;border-radius:20px;border:1px solid var(--border);cursor:pointer;font-size:12px;color:var(--text2);transition:all .2s;user-select:none}
+.tchip.sel{background:var(--accent);color:#1a1000;border-color:var(--accent)}
+.tchip:hover:not(.sel){border-color:var(--accent);color:var(--accent)}
+
+/* SIZE PICKER */
+.size-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(100px,1fr));gap:8px;margin-top:10px}
+.size-opt{padding:12px 8px;border-radius:9px;border:2px solid var(--border);cursor:pointer;text-align:center;transition:all .2s}
+.size-opt:hover{border-color:var(--accent)}
+.size-opt .s-name{font-size:13px;font-weight:600}
+.size-opt .s-price{font-size:12px;color:var(--accent);margin-top:3px}
+
+/* RECEIPT PRINT - sẽ in từ popup riêng */
+
+/* HISTORY */
+.hist-item{background:var(--surface2);border-radius:9px;margin-bottom:10px;overflow:hidden}
+.hist-head{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;cursor:pointer}
+.hist-head:hover{background:rgba(255,255,255,.03)}
+.hist-body{padding:0 14px 12px;border-top:1px solid var(--border);display:none}
+.hist-body.open{display:block}
+.hist-item-row{display:flex;justify-content:space-between;padding:4px 0;font-size:12px;border-bottom:1px solid var(--border)}
+.hist-item-row:last-child{border-bottom:none}
+.hist-log{font-size:11px;color:var(--text3);margin-top:6px;font-style:italic}
+
+/* FILTER BAR */
+.filter-bar{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px}
+
+/* QR */
+#qr-canvas{display:block;margin:0 auto}
+
+/* MOBILE */
+@media(max-width:768px){
+  .sidebar{transform:translateX(-100%)}
+  .sidebar.open{transform:translateX(0)}
+  .backdrop.show{display:block}
+  .hamburger{display:flex;align-items:center}
+  .main{margin-left:0;padding:14px;padding-top:52px}
+  .order-panel{width:100%}
+  .stats-grid{grid-template-columns:1fr 1fr}
+  .input-row{flex-direction:column}
+  .ph-title{font-size:19px}
+}
+.spinner{width:30px;height:30px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;margin:40px auto}
+@keyframes spin{to{transform:rotate(360deg)}}
+.empty{text-align:center;color:var(--text3);padding:32px;font-size:13px}
+.divider{height:1px;background:var(--border);margin:12px 0}
+.badge{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:var(--red);color:#fff;font-size:10px;font-weight:700;margin-left:4px}
+</style>
+</head>
+<body>
+
+<div id="toast-wrap"></div>
+<div id="notif-wrap"></div>
+<div id="receipt-iframe-wrap"></div>
+
+<!-- ═══ LOGIN ═══ -->
+<div id="login-screen">
+  <div class="login-box">
+    <div class="login-logo">
+      <h1 id="login-shop-name">☕ CaféShop</h1>
+      <p>POS SYSTEM</p>
+    </div>
+    <div class="field">
+      <label>Tên đăng nhập</label>
+      <div style="position:relative">
+        <input class="inp" id="lu" placeholder="admin hoặc tên nhân viên" oninput="updateLoginSuffix()">
+        <span class="login-suffix" id="lu-suffix"></span>
+      </div>
+    </div>
+    <div class="field"><label>Mật khẩu</label><input class="inp" type="password" id="lp" placeholder="••••••••" onkeydown="if(event.key==='Enter')doLogin()"></div>
+    <button class="btn btn-gold btn-full" onclick="doLogin()">Đăng nhập</button>
+    <div id="guest-login-wrap" style="display:none">
+      <div class="login-or">hoặc</div>
+      <button class="btn btn-outline btn-full" onclick="showGuest()">👤 Vào với tư cách khách</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ GUEST PAGE ═══ -->
+<div id="guest-screen">
+  <div class="guest-header">
+    <div>
+      <h2 id="guest-shop-name">☕ CaféShop</h2>
+      <div style="font-size:12px;color:var(--text3)" id="guest-shop-addr"></div>
+    </div>
+    <button class="btn btn-outline btn-sm" onclick="showLogin()">🔑 Nhân viên đăng nhập</button>
+  </div>
+  <div class="guest-body">
+    <div class="guest-info" id="guest-info">Chào mừng! Chọn bàn bạn muốn ngồi hoặc gọi thanh toán.</div>
+    <div id="guest-action" style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">
+      <button class="btn btn-gold" id="guest-btn-order" onclick="setGuestMode('order')" style="flex:1">🍽️ Gọi món</button>
+      <button class="btn btn-outline" id="guest-btn-pay" onclick="setGuestMode('pay')" style="flex:1">💳 Tính tiền</button>
+    </div>
+    <div class="guest-tables-grid" id="guest-tables-grid"></div>
+  </div>
+</div>
+
+<!-- ═══ APP ═══ -->
+<div id="app">
+  <button class="hamburger" onclick="toggleSidebar()">☰</button>
+  <div class="backdrop" id="backdrop" onclick="toggleSidebar()"></div>
+  <div class="sidebar" id="sidebar">
+    <div class="sidebar-logo">
+      <h2 id="sb-shop-name">☕ CaféShop</h2>
+      <p id="sb-shop-addr"></p>
+    </div>
+    <nav id="nav"></nav>
+    <div class="sidebar-bottom">
+      <div class="avatar" id="sb-avatar">?</div>
+      <div class="user-info">
+        <div class="user-name" id="sb-uname"></div>
+        <div class="user-role" id="sb-urole"></div>
+      </div>
+      <button class="logout-btn" onclick="doLogout()" title="Đăng xuất">⏻</button>
+    </div>
+  </div>
+  <div class="main" id="main"></div>
+</div>
+
+<!-- ORDER PANEL -->
+<div class="order-panel" id="order-panel">
+  <div class="op-head">
+    <div>
+      <div class="op-title" id="op-title">Bàn --</div>
+      <div style="font-size:11px;color:var(--text3)" id="op-meta"></div>
+    </div>
+    <button class="btn btn-outline btn-sm" onclick="closeOP()">✕</button>
+  </div>
+  <div class="op-body" id="op-body"></div>
+  <div class="op-foot">
+    <div class="total-row">
+      <span class="total-label">Tổng cộng</span>
+      <span class="total-amt" id="op-total">0 ₫</span>
+    </div>
+    <div class="op-actions">
+      <button class="btn btn-ghost btn-sm" onclick="openMergeModal()" title="Gộp bàn">🔗</button>
+      <button class="btn btn-gold btn-sm" style="flex:1" onclick="openMenuModal()">+ Thêm món</button>
+      <button class="btn btn-green btn-sm" onclick="openCheckout()">💳 Tính tiền</button>
+    </div>
+  </div>
+</div>
+
+<div id="modal-wrap"></div>
+
+<script>
+// ═══════════ STATE ═══════════
+const ADMIN_EMAIL = 'admin@myapp.com';
+const DOMAIN = '@myapp.com';
+let currentUser = null, isAdmin = false, isGuest = false;
+let shopConfig = {}, groups = [], items = [], orders = {}, staffList = [];
+let currentTableId = null, selectedToppings = [], guestMode = 'order';
+let unsubOrders = null;
+
+// Theme presets - mỗi theme đổi cả accent VÀ background, surface, border
+const THEMES = [
+  { name:'Cafe Vàng', accent:'#c9a84c', accent2:'#e8c96a',
+    bg:'#0f0d0b', surface:'#1a1714', surface2:'#231f1b', surface3:'#2e2924',
+    border:'#3a332c', text:'#f0e6d3', text2:'#b0a090', text3:'#6b5f52', cream:'#f5ead8' },
+  { name:'Ocean Teal', accent:'#3dbfa0', accent2:'#5ed9bc',
+    bg:'#0a1419', surface:'#0f1e26', surface2:'#152b35', surface3:'#1e3b48',
+    border:'#244553', text:'#e0eef2', text2:'#90b0bc', text3:'#5a7a86', cream:'#d8ecef' },
+  { name:'Rose Pink', accent:'#d4627a', accent2:'#f0849a',
+    bg:'#15090e', surface:'#21121a', surface2:'#2c1822', surface3:'#3a212e',
+    border:'#4a2a3a', text:'#f0d8df', text2:'#b89aa3', text3:'#7a5e68', cream:'#f5e0e6' },
+  { name:'Indigo Tím', accent:'#7b72e9', accent2:'#9e97f5',
+    bg:'#0d0b1a', surface:'#161226', surface2:'#1f1a35', surface3:'#2a2447',
+    border:'#352c5c', text:'#e6e1f5', text2:'#a39ec2', text3:'#6a6588', cream:'#ece8f8' },
+  { name:'Light Cream', accent:'#b8843d', accent2:'#d4a05a',
+    bg:'#faf5ec', surface:'#ffffff', surface2:'#f3ecdb', surface3:'#e8dec5',
+    border:'#d4c8a8', text:'#3a2e1a', text2:'#6b5a3a', text3:'#9e8a65', cream:'#5c4a2a' },
+  { name:'Sage Xanh', accent:'#6b9e5e', accent2:'#88bb7a',
+    bg:'#0d130b', surface:'#161e12', surface2:'#1d281a', surface3:'#283525',
+    border:'#36452f', text:'#e0eadb', text2:'#9aaa90', text3:'#62725a', cream:'#dde7d6' },
+  { name:'Midnight', accent:'#4a9eff', accent2:'#6db4ff',
+    bg:'#080b14', surface:'#0e1320', surface2:'#161d2e', surface3:'#1f2940',
+    border:'#2a3550', text:'#dde6f5', text2:'#8a98b3', text3:'#5a6680', cream:'#e5edf8' },
+  { name:'Amber Cam', accent:'#e09a30', accent2:'#f5b84a',
+    bg:'#140d05', surface:'#1f160a', surface2:'#2a1e10', surface3:'#382916',
+    border:'#48381d', text:'#f5e4cc', text2:'#bda280', text3:'#7a6850', cream:'#f8ecd6' },
+];
+const ACCENTS = THEMES; // backward compat
+
+// ═══════════ FIREBASE READY ═══════════
+window.addEventListener('firebase-ready', () => {
+  const { onAuthStateChanged } = window._firebase;
+  // Pre-load shop config for login page
+  loadShopConfigPublic();
+  onAuthStateChanged(window._auth, async u => {
+    if (u) {
+      currentUser = u; isAdmin = u.email === ADMIN_EMAIL; isGuest = false;
+      // Check if user is banned (not in staff list)
+      if (!isAdmin) {
+        const ok = await checkStaffAllowed(u.email);
+        if (!ok) { toast('Tài khoản bị vô hiệu hoá', 'err'); doLogout(); return; }
+        // Check & apply pending password
+        await applyPendingPassword(u);
+      }
+      await loadAllData();
+      showApp();
+    } else {
+      currentUser = null; isAdmin = false;
+      hideAll(); showLogin();
+    }
+  });
+});
+
+async function loadShopConfigPublic() {
+  try {
+    const { doc, getDoc } = window._firebase;
+    const snap = await getDoc(doc(window._db, 'config', 'shop'));
+    if (snap.exists()) {
+      shopConfig = snap.data();
+      applyAccent(shopConfig.accent || ACCENTS[0].accent, shopConfig.accent2 || ACCENTS[0].accent2);
+      const n = shopConfig.name || 'CaféShop';
+      document.getElementById('login-shop-name').textContent = '☕ ' + n;
+      document.getElementById('guest-shop-name').textContent = '☕ ' + n;
+      document.getElementById('guest-shop-addr').textContent = shopConfig.address || '';
+      if (shopConfig.guestEnabled) document.getElementById('guest-login-wrap').style.display = 'block';
+    }
+  } catch(e){}
+}
+
+async function checkStaffAllowed(email) {
+  try {
+    const { doc, getDoc } = window._firebase;
+    const snap = await getDoc(doc(window._db, 'config', 'disabled'));
+    if (!snap.exists()) return true;
+    const list = snap.data().emails || [];
+    return !list.includes(email);
+  } catch(e) {
+    console.error('checkStaffAllowed error:', e);
+    return true;
+  }
+}
+
+async function applyPendingPassword(user) {
+  // Gọi ngay sau khi login → Firebase chấp nhận updatePassword vì vừa auth xong
+  try {
+    const { collection, query, where, getDocs, doc, updateDoc, updatePassword } = window._firebase;
+    const q = query(collection(window._db,'staff'), where('email','==',user.email));
+    const snap = await getDocs(q);
+    if (snap.empty) return;
+    const sdoc = snap.docs[0];
+    const data = sdoc.data();
+    if (data.pendingPwd && data.pendingPwd.length >= 6) {
+      try {
+        await updatePassword(user, data.pendingPwd);
+        await updateDoc(doc(window._db,'staff',sdoc.id), {pendingPwd: null});
+        toast('🔑 Mật khẩu đã được đổi bởi admin. Lần sau dùng mật khẩu mới!','info');
+      } catch(e) {
+        console.warn('pendingPwd apply failed:', e.code);
+        // Nếu fail thì giữ nguyên pendingPwd, thử lại lần login sau
+      }
+    }
+  } catch(e) { console.error('applyPendingPassword:', e); }
+}
+
+// ═══════════ AUTH ═══════════
+function updateLoginSuffix() {
+  const v = document.getElementById('lu').value.trim();
+  document.getElementById('lu-suffix').textContent = (!v || v.includes('@')) ? '' : DOMAIN;
+}
+
+async function doLogin() {
+  let u = document.getElementById('lu').value.trim();
+  const p = document.getElementById('lp').value;
+  if (!u || !p) return toast('Nhập đầy đủ thông tin', 'err');
+  if (!u.includes('@')) u += DOMAIN;
+  try {
+    const { signInWithEmailAndPassword } = window._firebase;
+    await signInWithEmailAndPassword(window._auth, u, p);
+  } catch(e) { toast('Sai tài khoản hoặc mật khẩu', 'err'); }
+}
+async function doLogout() {
+  const { signOut } = window._firebase;
+  await signOut(window._auth);
+  // Xoá mật khẩu trong ô input để bảo mật
+  const lp = document.getElementById('lp');
+  const lu = document.getElementById('lu');
+  if (lp) lp.value = '';
+  if (lu) lu.value = '';
+  const suf = document.getElementById('lu-suffix');
+  if (suf) suf.textContent = '';
+}
+function hideAll() {
+  ['login-screen','guest-screen','app'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = 'none';
+  });
+}
+function showLogin() {
+  hideAll();
+  // Đảm bảo ô password rỗng khi vào lại màn hình login
+  const lp = document.getElementById('lp');
+  if (lp) lp.value = '';
+  document.getElementById('login-screen').style.display = 'flex';
+}
+function showGuest() {
+  isGuest = true;
+  hideAll();
+  document.getElementById('guest-screen').style.display = 'block';
+  loadGuestPage();
+}
+
+// ═══════════ GUEST PAGE ═══════════
+function setGuestMode(mode) {
+  guestMode = mode;
+  document.getElementById('guest-btn-order').className = 'btn btn-sm ' + (mode==='order' ? 'btn-gold' : 'btn-outline');
+  document.getElementById('guest-btn-pay').className = 'btn btn-sm ' + (mode==='pay' ? 'btn-gold' : 'btn-outline');
+  const infoEl = document.getElementById('guest-info');
+  infoEl.textContent = mode === 'order' ? 'Chọn bàn bạn muốn ngồi để gọi món:' : 'Chọn bàn của bạn để yêu cầu tính tiền:';
+}
+
+async function loadGuestPage() {
+  // Load shop config & orders
+  try {
+    const { doc, getDoc, collection, getDocs } = window._firebase;
+    const snap = await getDoc(doc(window._db, 'config', 'shop'));
+    if (snap.exists()) shopConfig = snap.data();
+    applyAccent(shopConfig.accent, shopConfig.accent2);
+    // Subscribe orders
+    subscribeOrders();
+    renderGuestTables();
+  } catch(e) { toast('Lỗi tải dữ liệu', 'err'); }
+}
+
+function renderGuestTables() {
+  const tableCount = shopConfig.tableCount || 20;
+  const grid = document.getElementById('guest-tables-grid');
+  if (!grid) return;
+  grid.innerHTML = '';
+  for (let i = 1; i <= tableCount; i++) {
+    const id = 't' + i;
+    const hasOrder = !!orders[id];
+    const div = document.createElement('div');
+    div.className = 'guest-table' + (hasOrder ? ' occupied' : '');
+    div.innerHTML = `<div class="tnum">${i}</div><div class="tstatus">${hasOrder ? 'Đang phục vụ' : 'Trống'}</div>`;
+    div.onclick = () => handleGuestTableClick(id, i);
+    grid.appendChild(div);
+  }
+}
+
+async function handleGuestTableClick(tableId, tableNum) {
+  if (guestMode === 'order') {
+    // Gửi notification cho nhân viên đang đăng nhập
+    try {
+      const { collection, addDoc, serverTimestamp } = window._firebase;
+      await addDoc(collection(window._db, 'notifications'), {
+        type: 'new_guest', tableId, tableNum, at: serverTimestamp(), read: false
+      });
+      // Khách chỉ thấy thông báo "đã gọi nhân viên" đơn giản
+      toast(`✅ Đã gọi nhân viên! Xin vui lòng chờ trong giây lát.`, 'ok');
+    } catch(e) {
+      toast('Không thể gọi. Vui lòng gọi trực tiếp nhân viên.', 'err');
+    }
+  } else {
+    try {
+      const { collection, addDoc, serverTimestamp } = window._firebase;
+      await addDoc(collection(window._db, 'notifications'), {
+        type: 'checkout_request', tableId, tableNum, at: serverTimestamp(), read: false
+      });
+      toast(`✅ Đã yêu cầu tính tiền! Nhân viên sẽ đến ngay.`, 'ok');
+    } catch(e) {
+      toast('Không thể yêu cầu. Vui lòng gọi trực tiếp nhân viên.', 'err');
+    }
+  }
+}
+
+// ═══════════ LOAD DATA ═══════════
+async function loadAllData() {
+  const { doc, getDoc, collection, getDocs, query, orderBy } = window._firebase;
+  const db = window._db;
+  const snap = await getDoc(doc(db, 'config', 'shop'));
+  if (snap.exists()) shopConfig = snap.data();
+  applyAccent(shopConfig.accent, shopConfig.accent2);
+
+  const [gSnap, iSnap, sSnap] = await Promise.all([
+    getDocs(query(collection(db, 'groups'), orderBy('order','asc'))),
+    getDocs(collection(db, 'items')),
+    getDocs(collection(db, 'staff')),
+  ]);
+  groups = gSnap.docs.map(d => ({id:d.id,...d.data()}));
+  items  = iSnap.docs.map(d => ({id:d.id,...d.data()}));
+  staffList = sSnap.docs.map(d => ({id:d.id,...d.data()}));
+  subscribeOrders();
+  subscribeNotifications();
+}
+
+function subscribeOrders() {
+  if (unsubOrders) unsubOrders();
+  const { collection, onSnapshot } = window._firebase;
+  unsubOrders = onSnapshot(collection(window._db, 'orders'), snap => {
+    snap.docChanges().forEach(ch => {
+      if (ch.type === 'removed') delete orders[ch.doc.id];
+      else orders[ch.doc.id] = {id:ch.doc.id,...ch.doc.data()};
+    });
+    refreshPOSGrid();
+    renderGuestTables();
+    if (currentTableId && document.getElementById('order-panel').classList.contains('open')) renderOP(currentTableId);
+  });
+}
+
+function subscribeNotifications() {
+  const { collection, onSnapshot, query, where } = window._firebase;
+  onSnapshot(query(collection(window._db,'notifications'), where('read','==',false)), snap => {
+    snap.docChanges().forEach(ch => {
+      if (ch.type === 'added') {
+        const d = ch.doc.data();
+        if (d.type === 'new_guest') showNotif(`🛎️ Có khách mới tại Bàn ${d.tableNum}`, 'new_guest');
+        if (d.type === 'checkout_request') showNotif(`💳 Khách Bàn ${d.tableNum} yêu cầu tính tiền`, 'checkout');
+        // Mark read
+        const { doc, updateDoc } = window._firebase;
+        updateDoc(doc(window._db,'notifications',ch.doc.id), {read:true}).catch(()=>{});
+      }
+    });
+  });
+}
+
+// ═══════════ APP UI ═══════════
+function showApp() {
+  hideAll();
+  document.getElementById('app').style.display = 'block';
+  buildNav(); updateSidebar(); updateShopUI();
+  navigateTo(isAdmin ? 'dashboard' : 'pos');
+}
+
+function updateShopUI() {
+  const n = shopConfig.name || 'CaféShop';
+  document.getElementById('sb-shop-name').textContent = '☕ ' + n;
+  document.getElementById('sb-shop-addr').textContent = shopConfig.address || '';
+}
+
+function updateSidebar() {
+  const name = displayName(currentUser.email);
+  document.getElementById('sb-avatar').textContent = name[0].toUpperCase();
+  document.getElementById('sb-uname').textContent = name;
+  document.getElementById('sb-urole').textContent = isAdmin ? '👑 Admin' : '🧑 Nhân viên';
+}
+
+const ADMIN_NAV = [
+  {id:'dashboard', icon:'📊', label:'Tổng quan'},
+  {id:'config',    icon:'⚙️', label:'Cấu hình quán'},
+  {id:'staff',     icon:'👥', label:'Nhân viên'},
+  {id:'menu',      icon:'🍽️', label:'Quản lý món'},
+  {id:'pos',       icon:'🧾', label:'Bán hàng'},
+  {id:'history',   icon:'📋', label:'Lịch sử'},
+];
+const STAFF_NAV = [{id:'pos',icon:'🧾',label:'Bán hàng'}];
+
+function buildNav() {
+  const pages = isAdmin ? ADMIN_NAV : STAFF_NAV;
+  document.getElementById('nav').innerHTML = pages.map(p =>
+    `<div class="nav-item" id="nav-${p.id}" onclick="navigateTo('${p.id}')">
+       <span class="nav-icon">${p.icon}</span>${p.label}
+     </div>`).join('');
+}
+
+let currentPage = '';
+function navigateTo(page) {
+  currentPage = page;
+  document.querySelectorAll('.nav-item').forEach(el=>el.classList.remove('active'));
+  const nav = document.getElementById('nav-'+page);
+  if (nav) nav.classList.add('active');
+  closeSidebar();
+  document.getElementById('main').innerHTML = '<div class="spinner"></div>';
+  setTimeout(() => {
+    if (page==='dashboard') renderDashboard();
+    else if (page==='config')    renderConfig();
+    else if (page==='staff')     renderStaff();
+    else if (page==='menu')      renderMenuMgmt();
+    else if (page==='pos')       renderPOS();
+    else if (page==='history')   renderHistory();
+  }, 80);
+}
+
+function toggleSidebar() {
+  document.getElementById('sidebar').classList.toggle('open');
+  document.getElementById('backdrop').classList.toggle('show');
+}
+function closeSidebar() {
+  document.getElementById('sidebar').classList.remove('open');
+  document.getElementById('backdrop').classList.remove('show');
+}
+
+// ═══════════ HELPERS ═══════════
+function displayName(email) { return email ? email.split('@')[0] : ''; }
+function fmtMoney(n) { return Number(n||0).toLocaleString('vi-VN') + ' ₫'; }
+function safeId(s) {
+  // Convert any string (including Vietnamese) to a safe HTML id
+  let h = 0;
+  for (let i = 0; i < s.length; i++) { h = ((h << 5) - h + s.charCodeAt(i)) | 0; }
+  return 'h' + Math.abs(h).toString(36);
+}
+function fmtDate(ts) {
+  if (!ts) return '';
+  const d = ts.toDate ? ts.toDate() : new Date(ts);
+  return d.toLocaleString('vi-VN');
+}
+function toast(msg, type='info') {
+  const el = document.createElement('div');
+  el.className = 'toast ' + (type==='error'?'err':type);
+  el.textContent = msg;
+  document.getElementById('toast-wrap').appendChild(el);
+  setTimeout(()=>el.remove(), 3500);
+}
+function showNotif(msg, type) {
+  // Chỉ hiển thị notif cho nhân viên/admin ĐÃ đăng nhập
+  // Khách guest không thấy notif này
+  if (isGuest || !currentUser) return;
+  const el = document.createElement('div');
+  el.className = 'notif';
+  el.innerHTML = `<div class="notif-title">${type==='new_guest'?'🛎️ KHÁCH MỚI':'💳 TÍNH TIỀN'}</div>${msg}`;
+  document.getElementById('notif-wrap').appendChild(el);
+  setTimeout(()=>el.remove(), 6000);
+}
+function applyAccent(a, a2) {
+  // Backward compat - tìm theme tương ứng và áp dụng
+  if (!a) return;
+  const theme = THEMES.find(t => t.accent === a) || THEMES[0];
+  applyTheme(theme);
+}
+
+function applyTheme(t) {
+  if (!t) return;
+  const r = document.documentElement.style;
+  r.setProperty('--accent', t.accent);
+  r.setProperty('--accent2', t.accent2);
+  r.setProperty('--bg', t.bg);
+  r.setProperty('--surface', t.surface);
+  r.setProperty('--surface2', t.surface2);
+  r.setProperty('--surface3', t.surface3);
+  r.setProperty('--border', t.border);
+  r.setProperty('--text', t.text);
+  r.setProperty('--text2', t.text2);
+  r.setProperty('--text3', t.text3);
+  r.setProperty('--cream', t.cream);
+}
+
+// Modal
+function openModal(html) {
+  document.getElementById('modal-wrap').innerHTML = `<div class="modal-overlay" onclick="if(event.target===this)closeModal()">${html}</div>`;
+}
+function closeModal() { document.getElementById('modal-wrap').innerHTML = ''; }
+
+// ═══════════ DASHBOARD ═══════════
+function renderDashboard() {
+  const open = Object.values(orders).length;
+  const tc = shopConfig.tableCount || 20;
+  document.getElementById('main').innerHTML = `
+    <div class="ph"><div><h2 class="ph-title">Tổng quan</h2></div></div>
+    <div class="stats-grid">
+      <div class="stat"><div class="stat-label">Bàn đang dùng</div><div class="stat-val">${open}</div><div class="stat-sub">/ ${tc} bàn</div></div>
+      <div class="stat"><div class="stat-label">Nhóm món</div><div class="stat-val">${groups.length}</div><div class="stat-sub">nhóm</div></div>
+      <div class="stat"><div class="stat-label">Tổng món</div><div class="stat-val">${items.length}</div><div class="stat-sub">sản phẩm</div></div>
+      <div class="stat"><div class="stat-label">Nhân viên</div><div class="stat-val">${staffList.filter(s=>s.active).length}</div><div class="stat-sub">đang hoạt động</div></div>
+    </div>
+    <div class="card">
+      <div class="card-title"><span>🛎️ Bàn đang có khách</span></div>
+      <div id="dash-tables"></div>
+    </div>`;
+  const occ = Object.values(orders);
+  const dt = document.getElementById('dash-tables');
+  if (!occ.length) { dt.innerHTML = '<div class="empty">Chưa có bàn nào đang phục vụ</div>'; return; }
+  dt.innerHTML = `<div class="tbl-wrap"><table>
+    <thead><tr><th>Bàn</th><th>Nhân viên</th><th>Số món</th><th>Tổng tiền</th></tr></thead>
+    <tbody>${occ.map(o=>`<tr>
+      <td>🪑 Bàn ${o.tableId.replace('t','')}</td>
+      <td>${displayName(o.staffEmail||'')}</td>
+      <td>${(o.items||[]).reduce((s,i)=>s+(i.qty||1),0)} món</td>
+      <td style="color:var(--accent)">${fmtMoney(calcTotal(o))}</td>
+    </tr>`).join('')}</tbody>
+  </table></div>`;
+}
+
+// ═══════════ CONFIG ═══════════
+function renderConfig() {
+  const tc = shopConfig.tableCount || 20;
+  const cur = THEMES.findIndex(a=>a.accent===(shopConfig.accent||THEMES[0].accent));
+  document.getElementById('main').innerHTML = `
+    <div class="ph"><div><h2 class="ph-title">Cấu hình quán</h2></div></div>
+    <div class="card">
+      <div class="card-title"><span>🏪 Thông tin quán</span></div>
+      <div class="input-row">
+        <div class="field"><label>Tên quán</label><input class="inp" id="cfg-name" value="${shopConfig.name||''}" placeholder="Tên quán"></div>
+        <div class="field"><label>Số điện thoại</label><input class="inp" id="cfg-phone" value="${shopConfig.phone||''}" placeholder="0901234567"></div>
+      </div>
+      <div class="field"><label>Địa chỉ</label><input class="inp" id="cfg-addr" value="${shopConfig.address||''}" placeholder="Địa chỉ quán"></div>
+      <div class="field"><label>Lời chào hóa đơn</label><input class="inp" id="cfg-footer" value="${shopConfig.footer||'Cảm ơn quý khách!'}" placeholder="Cảm ơn quý khách!"></div>
+      <div class="divider"></div>
+      <div class="input-row">
+        <div class="field"><label>Mã ngân hàng (VCB, TCB, MB, BIDV...)</label><input class="inp" id="cfg-bank" value="${shopConfig.bank||''}" placeholder="VD: VCB"></div>
+        <div class="field"><label>Số tài khoản</label><input class="inp" id="cfg-banknum" value="${shopConfig.bankNum||''}" placeholder="0123456789"></div>
+      </div>
+      <div class="field"><label>Tên chủ tài khoản (không dấu)</label><input class="inp" id="cfg-bankname" value="${shopConfig.bankName||''}" placeholder="NGUYEN VAN A"></div>
+      <div style="font-size:11px;color:var(--text3);margin:-8px 0 14px;line-height:1.6">
+        💡 Mã ngân hàng phổ biến: <b>VCB</b> (Vietcombank), <b>TCB</b> (Techcombank), <b>MB</b> (MB Bank), <b>BIDV</b>, <b>ACB</b>, <b>VPB</b> (VPBank), <b>TPB</b> (TPBank), <b>SHB</b>, <b>VTB</b> (Vietinbank), <b>AGRIBANK</b>, <b>HDB</b> (HDBank), <b>OCB</b>, <b>MSB</b>, <b>SCB</b>
+      </div>
+      <div class="divider"></div>
+      <div class="input-row">
+        <div class="field"><label>Số bàn</label><input class="inp" type="number" id="cfg-tables" value="${tc}" min="1" max="100" placeholder="20"></div>
+        <div class="field" style="display:flex;align-items:flex-end;padding-bottom:14px">
+          <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+            <input type="checkbox" id="cfg-guest" ${shopConfig.guestEnabled?'checked':''} style="width:16px;height:16px;accent-color:var(--accent)">
+            <span style="font-size:13px;color:var(--text)">Cho phép khách tự order</span>
+          </label>
+        </div>
+      </div>
+      <div class="field"><label>Theme (màu chủ đạo + nền)</label>
+        <div class="color-swatches" id="color-swatches">
+          ${THEMES.map((t,i)=>`<div class="theme-card ${i===cur?'active':''}" onclick="pickAccent(${i},this)" title="${t.name}">
+            <div class="theme-preview" style="background:${t.bg};border-color:${t.border}">
+              <div style="background:${t.surface};height:8px;width:60%;border-radius:2px;margin-bottom:3px"></div>
+              <div style="background:${t.accent};height:5px;width:40%;border-radius:2px"></div>
+            </div>
+            <div class="theme-name" style="color:${t.text}">${t.name}</div>
+          </div>`).join('')}
+        </div>
+      </div>
+      <button class="btn btn-gold" onclick="saveConfig()" style="margin-top:6px">💾 Lưu cấu hình</button>
+    </div>`;
+}
+
+let pickedAccentIdx = null;
+function pickAccent(i, el) {
+  document.querySelectorAll('.theme-card').forEach(s=>s.classList.remove('active'));
+  el.classList.add('active');
+  pickedAccentIdx = i;
+  applyTheme(THEMES[i]);
+}
+
+async function saveConfig() {
+  const { doc, setDoc } = window._firebase;
+  const tc = parseInt(document.getElementById('cfg-tables').value)||20;
+  const ai = pickedAccentIdx !== null ? pickedAccentIdx : THEMES.findIndex(a=>a.accent===(shopConfig.accent||THEMES[0].accent));
+  const t = THEMES[Math.max(0,ai)];
+  shopConfig = {
+    name: document.getElementById('cfg-name').value.trim(),
+    address: document.getElementById('cfg-addr').value.trim(),
+    phone: document.getElementById('cfg-phone').value.trim(),
+    footer: document.getElementById('cfg-footer').value.trim(),
+    bank: document.getElementById('cfg-bank').value.trim(),
+    bankNum: document.getElementById('cfg-banknum').value.trim(),
+    bankName: document.getElementById('cfg-bankname').value.trim(),
+    tableCount: tc,
+    guestEnabled: document.getElementById('cfg-guest').checked,
+    accent: t.accent, accent2: t.accent2,
+    themeName: t.name,
+  };
+  await setDoc(doc(window._db,'config','shop'), shopConfig);
+  applyTheme(t);
+  updateShopUI();
+  if (shopConfig.guestEnabled) document.getElementById('guest-login-wrap').style.display='block';
+  toast('Đã lưu cấu hình!','ok'); pickedAccentIdx = null;
+}
+
+// ═══════════ STAFF ═══════════
+function renderStaff() {
+  document.getElementById('main').innerHTML = `
+    <div class="ph">
+      <div><h2 class="ph-title">Quản lý nhân viên</h2></div>
+      <button class="btn btn-gold btn-sm" onclick="openAddStaffModal()">+ Thêm nhân viên</button>
+    </div>
+    <div class="card" style="border-color:var(--accent);background:var(--surface2)">
+      <div class="card-title"><span>🔑 Đổi mật khẩu Admin</span></div>
+      <p style="font-size:12px;color:var(--text3);margin-bottom:12px">Đổi mật khẩu tài khoản admin của bạn (${ADMIN_EMAIL})</p>
+      <div class="input-row">
+        <div class="field"><label>Mật khẩu hiện tại</label><input class="inp" type="password" id="admin-old-pwd" placeholder="Mật khẩu hiện tại"></div>
+        <div class="field"><label>Mật khẩu mới</label><input class="inp" type="password" id="admin-new-pwd" placeholder="Tối thiểu 6 ký tự"></div>
+      </div>
+      <button class="btn btn-gold btn-sm" onclick="changeAdminPassword()">🔑 Đổi mật khẩu admin</button>
+    </div>
+    <div class="card">
+      <div class="card-title"><span>👥 Danh sách nhân viên</span></div>
+      <p style="font-size:12px;color:var(--text3);margin-bottom:14px">
+        ✅ Tạo: thêm vào cả <b>Firebase Auth</b> và <b>Firestore</b><br>
+        🚫 Vô hiệu: không thể login (check mỗi lần đăng nhập)<br>
+        🔑 Đổi mật khẩu: NV login lại bằng mật khẩu cũ → tự động đổi sang mật khẩu mới
+      </p>
+      <div id="staff-list-area"><div class="spinner"></div></div>
+    </div>`;
+  renderStaffList();
+}
+
+function renderStaffList() {
+  const area = document.getElementById('staff-list-area');
+  if (!area) return;
+  if (!staffList.length) { area.innerHTML = '<div class="empty">Chưa có nhân viên nào</div>'; return; }
+  area.innerHTML = `<div class="tbl-wrap"><table>
+    <thead><tr><th>Tên đăng nhập</th><th>Họ tên</th><th>Trạng thái</th><th>MK mới</th><th>Thao tác</th></tr></thead>
+    <tbody>${staffList.map(s=>{
+      const isActive = s.active !== false;
+      const hasPending = !!s.pendingPwd;
+      return `<tr style="${isActive?'':'opacity:.5'}">
+        <td style="font-weight:600">${displayName(s.email)}</td>
+        <td>${s.fullName||'-'}</td>
+        <td>${isActive
+          ? '<span class="tag tag-green">✓ Hoạt động</span>'
+          : '<span class="tag tag-red">✗ Vô hiệu</span>'}</td>
+        <td>${hasPending
+          ? '<span class="tag tag-blue" title="NV chưa login lại để áp dụng">⏳ Đang chờ</span>'
+          : '<span style="color:var(--text3);font-size:11px">-</span>'}</td>
+        <td style="display:flex;gap:4px;flex-wrap:wrap">
+          <button class="btn btn-ghost btn-xs" onclick="openEditStaff('${s.id}')">✏️ Sửa</button>
+          ${isActive
+            ? `<button class="btn btn-red btn-xs" onclick="deactivateStaff('${s.id}','${s.email}')">🚫 Khoá</button>`
+            : `<button class="btn btn-green btn-xs" onclick="reactivateStaff('${s.id}','${s.email}')">✅ Mở</button>`}
+        </td>
+      </tr>`;
+    }).join('')}</tbody>
+  </table></div>`;
+}
+
+async function changeAdminPassword() {
+  const oldPwd = document.getElementById('admin-old-pwd').value;
+  const newPwd = document.getElementById('admin-new-pwd').value;
+  if (!oldPwd || !newPwd) return toast('Nhập đủ mật khẩu cũ và mới', 'err');
+  if (newPwd.length < 6) return toast('Mật khẩu mới tối thiểu 6 ký tự', 'err');
+  if (oldPwd === newPwd) return toast('Mật khẩu mới phải khác mật khẩu cũ', 'err');
+  try {
+    const { signInWithEmailAndPassword, updatePassword } = window._firebase;
+    // Re-authenticate với mật khẩu cũ để Firebase chắc chắn
+    await signInWithEmailAndPassword(window._auth, ADMIN_EMAIL, oldPwd);
+    await updatePassword(window._auth.currentUser, newPwd);
+    document.getElementById('admin-old-pwd').value = '';
+    document.getElementById('admin-new-pwd').value = '';
+    toast('✅ Đã đổi mật khẩu admin thành công!', 'ok');
+  } catch(e) {
+    if (e.code === 'auth/wrong-password' || e.code === 'auth/invalid-credential') {
+      toast('❌ Mật khẩu hiện tại sai!', 'err');
+    } else {
+      toast('❌ Lỗi: ' + (e.message||e), 'err');
+    }
+  }
+}
+
+function openAddStaffModal() {
+  openModal(`
+    <div class="modal" onclick="event.stopPropagation()">
+      <div class="modal-title"><h3>➕ Thêm nhân viên</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
+      <div class="field"><label>Tên đăng nhập</label>
+        <div style="position:relative">
+          <input class="inp" id="su" placeholder="VD: nguyenvan" autocomplete="off">
+          <span class="login-suffix">${DOMAIN}</span>
+        </div>
+      </div>
+      <div class="field"><label>Họ tên (tuỳ chọn)</label><input class="inp" id="sfn" placeholder="Nguyễn Văn A"></div>
+      <div class="field"><label>Mật khẩu</label><input class="inp" type="password" id="sp" placeholder="Tối thiểu 6 ký tự" autocomplete="new-password"></div>
+      <div style="background:var(--surface2);border-radius:8px;padding:10px;font-size:12px;color:var(--text3);margin-bottom:14px">
+        ℹ️ Tài khoản sẽ được tạo đồng thời trong <b>Firebase Auth</b> và <b>danh sách nhân viên</b>.
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline btn-sm" onclick="closeModal()">Hủy</button>
+        <button class="btn btn-gold btn-sm" onclick="addStaff()">✅ Tạo tài khoản</button>
+      </div>
+    </div>`);
+}
+
+async function addStaff() {
+  let u = document.getElementById('su').value.trim();
+  const fn = document.getElementById('sfn').value.trim();
+  const p = document.getElementById('sp').value;
+  if (!u) return toast('Nhập tên đăng nhập','err');
+  if (p.length < 6) return toast('Mật khẩu tối thiểu 6 ký tự','err');
+  if (!u.includes('@')) u += DOMAIN;
+  if (staffList.find(s=>s.email===u && s.active!==false)) return toast('Tài khoản đã tồn tại','err');
+
+  const btn = document.querySelector('.modal .btn-gold');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Đang tạo...'; }
+
+  try {
+    // 1. Tạo trong Firebase Auth (secondary app để không đăng xuất admin)
+    const { initializeApp, getApps, getAuth, createUserWithEmailAndPassword } = window._firebase;
+    const secAppName = 'sec_' + Date.now();
+    const sec = initializeApp(window._app.options, secAppName);
+    const secAuth = getAuth(sec);
+    await createUserWithEmailAndPassword(secAuth, u, p);
+    await secAuth.signOut();
+
+    // 2. Ghi vào Firestore staff collection
+    const { collection, addDoc } = window._firebase;
+    const ref = await addDoc(collection(window._db,'staff'), {
+      email: u, fullName: fn, active: true,
+      createdAt: new Date().toISOString(),
+      createdBy: currentUser.email
+    });
+    staffList.push({id:ref.id, email:u, fullName:fn, active:true});
+    closeModal();
+    toast(`✅ Đã tạo tài khoản: ${displayName(u)}`, 'ok');
+    renderStaffList();
+  } catch(e) {
+    const msg = e.code === 'auth/email-already-in-use'
+      ? 'Email đã tồn tại trong Firebase Auth'
+      : (e.message || String(e));
+    toast('❌ Lỗi: ' + msg, 'err');
+    if (btn) { btn.disabled = false; btn.textContent = '✅ Tạo tài khoản'; }
+  }
+}
+
+function openEditStaff(id) {
+  const s = staffList.find(x=>x.id===id);
+  if (!s) return;
+  openModal(`
+    <div class="modal" onclick="event.stopPropagation()">
+      <div class="modal-title"><h3>✏️ Sửa: ${displayName(s.email)}</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
+      <div class="field"><label>Họ tên</label><input class="inp" id="ef" value="${s.fullName||''}" placeholder="Họ tên"></div>
+      <div class="field">
+        <label>Đặt lại mật khẩu mới</label>
+        <input class="inp" type="password" id="ep" placeholder="Để trống nếu không đổi" autocomplete="new-password">
+        <div style="font-size:11px;color:var(--text3);margin-top:4px">
+          ⚠️ NV cần <b>login lại bằng mật khẩu cũ</b> → hệ thống tự đổi sang mật khẩu mới
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline btn-sm" onclick="closeModal()">Hủy</button>
+        <button class="btn btn-gold btn-sm" onclick="saveEditStaff('${id}')">Lưu</button>
+      </div>
+    </div>`);
+}
+
+async function saveEditStaff(id) {
+  const fn = document.getElementById('ef').value.trim();
+  const np = document.getElementById('ep').value;
+  const { doc, updateDoc } = window._firebase;
+  const updates = { fullName: fn };
+  if (np && np.length >= 6) {
+    updates.pendingPwd = np; // NV sẽ apply khi login lần tới
+  } else if (np && np.length > 0 && np.length < 6) {
+    return toast('Mật khẩu mới tối thiểu 6 ký tự', 'err');
+  }
+  await updateDoc(doc(window._db,'staff',id), updates);
+  const s = staffList.find(x=>x.id===id);
+  if (s) { s.fullName = fn; if (np && np.length >= 6) s.pendingPwd = np; }
+  closeModal();
+  toast(np && np.length >= 6 ? '✅ Đã lưu. Mật khẩu mới áp dụng khi NV login lại.' : '✅ Đã cập nhật', 'ok');
+  renderStaffList();
+}
+
+async function deactivateStaff(id, email) {
+  if (!confirm(`🚫 Khoá tài khoản "${displayName(email)}"?\n\nNhân viên này sẽ KHÔNG đăng nhập được nữa.`)) return;
+  const { doc, updateDoc, getDoc, setDoc } = window._firebase;
+  // Cập nhật Firestore staff
+  await updateDoc(doc(window._db,'staff',id), {active:false});
+  // Thêm vào disabled list (được check mỗi khi login)
+  const disRef = doc(window._db,'config','disabled');
+  const snap = await getDoc(disRef);
+  const cur = snap.exists() ? (snap.data().emails||[]) : [];
+  if (!cur.includes(email)) cur.push(email);
+  await setDoc(disRef, {emails: cur});
+  staffList = staffList.map(s=>s.id===id ? {...s, active:false} : s);
+  toast(`✅ Đã khoá tài khoản ${displayName(email)}`, 'ok');
+  renderStaffList();
+}
+
+async function reactivateStaff(id, email) {
+  if (!confirm(`✅ Mở lại tài khoản "${displayName(email)}"?`)) return;
+  const { doc, updateDoc, getDoc, setDoc } = window._firebase;
+  await updateDoc(doc(window._db,'staff',id), {active:true});
+  // Xoá khỏi disabled list
+  const disRef = doc(window._db,'config','disabled');
+  const snap = await getDoc(disRef);
+  if (snap.exists()) {
+    const cur = (snap.data().emails||[]).filter(e=>e!==email);
+    await setDoc(disRef, {emails: cur});
+  }
+  staffList = staffList.map(s=>s.id===id ? {...s, active:true} : s);
+  toast(`✅ Đã mở lại tài khoản ${displayName(email)}`, 'ok');
+  renderStaffList();
+}
+
+// ═══════════ MENU MANAGEMENT ═══════════
+let menuTab = 'tree';
+function renderMenuMgmt() {
+  document.getElementById('main').innerHTML = `
+    <div class="ph">
+      <div><h2 class="ph-title">Quản lý món</h2></div>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-ghost btn-sm" onclick="openGroupModal()">+ Thêm nhóm</button>
+        <button class="btn btn-gold btn-sm" onclick="openItemModal()">+ Thêm món</button>
+      </div>
+    </div>
+    <div id="menu-tree"></div>`;
+  renderMenuTree();
+}
+
+function renderMenuTree() {
+  const area = document.getElementById('menu-tree');
+  if (!area) return;
+  if (!groups.length) { area.innerHTML = '<div class="empty">Chưa có nhóm món nào. Thêm nhóm trước.</div>'; return; }
+  area.innerHTML = groups.map(g => {
+    const gItems = items.filter(i=>i.groupId===g.id);
+    // Group items by name (for sizes)
+    const byName = {};
+    gItems.forEach(it => {
+      if (!byName[it.name]) byName[it.name] = [];
+      byName[it.name].push(it);
+    });
+    const isTopping = g.name && g.name.toLowerCase()==='topping';
+    return `<div class="folder card" style="padding:0;overflow:hidden;margin-bottom:10px">
+      <div class="folder-head" onclick="toggleFolder('fg-${g.id}',this)">
+        <span class="folder-arrow" id="fa-fg-${g.id}">▶</span>
+        <span>${isTopping?'🫧 ':''} ${g.name}</span>
+        <span class="tag tag-gold" style="margin-left:auto">${gItems.length} món</span>
+        <button class="btn btn-ghost btn-xs" style="margin-left:8px" onclick="event.stopPropagation();openEditGroup('${g.id}')">✏️</button>
+        <button class="btn btn-red btn-xs" style="margin-left:4px" onclick="event.stopPropagation();deleteGroup('${g.id}')">🗑</button>
+      </div>
+      <div class="folder-body" id="fg-${g.id}" style="padding:8px 12px">
+        ${Object.entries(byName).length ? Object.entries(byName).map(([name, sizes]) => {
+          if (sizes.length === 1 && !sizes[0].size) {
+            return `<div class="folder-item">
+              <span style="font-size:13px;font-weight:500">${name}</span>
+              <div style="display:flex;align-items:center;gap:8px">
+                <span style="color:var(--accent);font-size:13px">${fmtMoney(sizes[0].price)}</span>
+                <button class="btn btn-ghost btn-xs" onclick="openEditItem('${sizes[0].id}')">✏️</button>
+                <button class="btn btn-red btn-xs" onclick="deleteItem('${sizes[0].id}')">🗑</button>
+              </div>
+            </div>`;
+          }
+          return `<div class="sub-folder">
+            <div class="sub-folder-head" onclick="toggleFolder('sf-${g.id}-${safeId(name)}',this)">
+              <span class="folder-arrow" id="fa-sf-${g.id}-${safeId(name)}">▶</span>
+              📦 ${name}
+              <span class="tag tag-blue" style="margin-left:auto">${sizes.length} size</span>
+            </div>
+            <div class="sub-folder-body" id="sf-${g.id}-${safeId(name)}">
+              ${sizes.map(s=>`<div class="folder-item" style="margin-bottom:4px">
+                <span style="font-size:12px">${s.size||'Mặc định'}</span>
+                <div style="display:flex;align-items:center;gap:6px">
+                  <span style="color:var(--accent);font-size:12px">${fmtMoney(s.price)}</span>
+                  <button class="btn btn-ghost btn-xs" onclick="openEditItem('${s.id}')">✏️</button>
+                  <button class="btn btn-red btn-xs" onclick="deleteItem('${s.id}')">🗑</button>
+                </div>
+              </div>`).join('')}
+            </div>
+          </div>`;
+        }).join('') : '<div class="empty" style="padding:12px">Chưa có món trong nhóm này</div>'}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function toggleFolder(id, headEl) {
+  const body = document.getElementById(id);
+  const arrow = document.getElementById('fa-'+id);
+  if (!body) return;
+  body.classList.toggle('open');
+  if (arrow) arrow.style.transform = body.classList.contains('open') ? 'rotate(90deg)' : '';
+}
+
+function openGroupModal(editId) {
+  const g = editId ? groups.find(x=>x.id===editId) : null;
+  openModal(`
+    <div class="modal" onclick="event.stopPropagation()">
+      <div class="modal-title"><h3>${g?'Sửa nhóm':'Thêm nhóm'}</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
+      <div class="field"><label>Tên nhóm</label><input class="inp" id="gn" value="${g?g.name:''}" placeholder="VD: Cà phê, Trà sữa, Topping..."></div>
+      <div class="field"><label>Thứ tự hiển thị</label><input class="inp" type="number" id="go" value="${g?g.order:groups.length}"></div>
+      <div class="modal-footer">
+        <button class="btn btn-outline btn-sm" onclick="closeModal()">Hủy</button>
+        <button class="btn btn-gold btn-sm" onclick="${g?'saveEditGroup(\''+editId+'\')':'addGroup()'}">Lưu</button>
+      </div>
+    </div>`);
+}
+
+function openEditGroup(id) { openGroupModal(id); }
+
+async function addGroup() {
+  const name = document.getElementById('gn').value.trim();
+  const ord = parseInt(document.getElementById('go').value)||0;
+  if (!name) return toast('Nhập tên nhóm','err');
+  if (groups.find(g=>g.name.toLowerCase()===name.toLowerCase())) return toast('Nhóm đã tồn tại','err');
+  const { collection, addDoc } = window._firebase;
+  const ref = await addDoc(collection(window._db,'groups'), {name, order:ord});
+  groups.push({id:ref.id, name, order:ord});
+  groups.sort((a,b)=>(a.order||0)-(b.order||0));
+  closeModal(); toast('Đã thêm nhóm: '+name,'ok'); renderMenuTree();
+}
+
+async function saveEditGroup(id) {
+  const name = document.getElementById('gn').value.trim();
+  const ord = parseInt(document.getElementById('go').value)||0;
+  if (!name) return toast('Nhập tên nhóm','err');
+  const { doc, updateDoc } = window._firebase;
+  await updateDoc(doc(window._db,'groups',id), {name, order:ord});
+  const g = groups.find(x=>x.id===id);
+  if (g) { g.name=name; g.order=ord; }
+  groups.sort((a,b)=>(a.order||0)-(b.order||0));
+  closeModal(); toast('Đã cập nhật nhóm','ok'); renderMenuTree();
+}
+
+async function deleteGroup(id) {
+  if (!confirm('Xoá nhóm này? Các món trong nhóm cũng sẽ bị xoá.')) return;
+  const { doc, deleteDoc, collection, getDocs, query, where } = window._firebase;
+  const q = query(collection(window._db,'items'), where('groupId','==',id));
+  const snap = await getDocs(q);
+  for (const d of snap.docs) await deleteDoc(doc(window._db,'items',d.id));
+  await deleteDoc(doc(window._db,'groups',id));
+  groups = groups.filter(g=>g.id!==id);
+  items = items.filter(i=>i.groupId!==id);
+  toast('Đã xoá nhóm','ok'); renderMenuTree();
+}
+
+function openItemModal(editId) {
+  const it = editId ? items.find(x=>x.id===editId) : null;
+  openModal(`
+    <div class="modal" onclick="event.stopPropagation()">
+      <div class="modal-title"><h3>${it?'Sửa món':'Thêm món'}</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
+      <div class="field"><label>Tên món</label><input class="inp" id="in" value="${it?it.name:''}" placeholder="VD: Cà phê đen, Trà đào..."></div>
+      <div class="field"><label>Nhóm</label>
+        <select class="inp" id="ig">
+          <option value="">-- Chọn nhóm --</option>
+          ${groups.map(g=>`<option value="${g.id}" ${it&&it.groupId===g.id?'selected':''}>${g.name}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field"><label>Size (để trống nếu không có)</label><input class="inp" id="is" value="${it?it.size||'':''}" placeholder="VD: S, M, L, Nhỏ, Vừa..."></div>
+      <div class="field"><label>Giá (₫)</label><input class="inp" type="number" id="ip" value="${it?it.price:''}" placeholder="25000"></div>
+      <div class="modal-footer">
+        <button class="btn btn-outline btn-sm" onclick="closeModal()">Hủy</button>
+        <button class="btn btn-gold btn-sm" onclick="${it?'saveEditItem(\''+editId+'\')':'addItem()'}">Lưu</button>
+      </div>
+    </div>`);
+}
+
+function openEditItem(id) { openItemModal(id); }
+
+async function addItem() {
+  const name = document.getElementById('in').value.trim();
+  const gid = document.getElementById('ig').value;
+  const size = document.getElementById('is').value.trim();
+  const price = parseInt(document.getElementById('ip').value)||0;
+  if (!name||!gid||!price) return toast('Điền đầy đủ thông tin','err');
+  // Check duplicate (same name + group + size)
+  if (items.find(i=>i.name===name&&i.groupId===gid&&(i.size||'')===(size||''))) return toast('Món này đã tồn tại (trùng tên + size)','err');
+  const { collection, addDoc } = window._firebase;
+  const ref = await addDoc(collection(window._db,'items'), {name, groupId:gid, size, price});
+  items.push({id:ref.id, name, groupId:gid, size, price});
+  closeModal(); toast('Đã thêm món: '+name,'ok'); renderMenuTree();
+}
+
+async function saveEditItem(id) {
+  const name = document.getElementById('in').value.trim();
+  const gid = document.getElementById('ig').value;
+  const size = document.getElementById('is').value.trim();
+  const price = parseInt(document.getElementById('ip').value)||0;
+  if (!name||!gid||!price) return toast('Điền đầy đủ','err');
+  const { doc, updateDoc } = window._firebase;
+  await updateDoc(doc(window._db,'items',id), {name, groupId:gid, size, price});
+  const i = items.find(x=>x.id===id);
+  if (i) { i.name=name; i.groupId=gid; i.size=size; i.price=price; }
+  closeModal(); toast('Đã cập nhật','ok'); renderMenuTree();
+}
+
+async function deleteItem(id) {
+  if (!confirm('Xoá món này?')) return;
+  const { doc, deleteDoc } = window._firebase;
+  await deleteDoc(doc(window._db,'items',id));
+  items = items.filter(i=>i.id!==id);
+  toast('Đã xoá','ok'); renderMenuTree();
+}
+
+// ═══════════ POS ═══════════
+function renderPOS() {
+  document.getElementById('main').innerHTML = `
+    <div class="ph">
+      <div><h2 class="ph-title">🧾 Bán hàng</h2><div class="ph-sub">Chọn bàn để order</div></div>
+    </div>
+    <div class="pos-grid" id="pos-grid"></div>`;
+  refreshPOSGrid();
+}
+
+function refreshPOSGrid() {
+  const grid = document.getElementById('pos-grid');
+  if (!grid) return;
+  grid.innerHTML = '';
+  const tc = shopConfig.tableCount || 20;
+  for (let i = 1; i <= tc; i++) {
+    const id = 't'+i;
+    const ord = orders[id];
+    const card = document.createElement('div');
+    card.className = 't-card' + (ord?' occupied':'') + (id===currentTableId?' selected':'');
+    card.draggable = true;
+    card.dataset.id = id;
+    card.innerHTML = `
+      <div class="tnum">${i}</div>
+      <div class="tstatus">${ord?'Có khách':'Trống'}</div>
+      ${ord?`<div class="tamount">${fmtMoney(calcTotal(ord))}</div>
+             <div class="tstaff">${displayName(ord.staffEmail||'')}</div>`:''}`;
+    card.onclick = () => selectTable(id);
+    card.addEventListener('dragstart', e=>e.dataTransfer.setData('text',id));
+    card.addEventListener('dragover', e=>{e.preventDefault();card.style.outline='2px dashed var(--accent2)'});
+    card.addEventListener('dragleave', ()=>card.style.outline='');
+    card.addEventListener('drop', e=>{
+      e.preventDefault(); card.style.outline='';
+      const from = e.dataTransfer.getData('text');
+      if (from && from!==id) confirmMerge(from, id);
+    });
+    grid.appendChild(card);
+  }
+}
+
+function selectTable(id) {
+  currentTableId = id;
+  refreshPOSGrid();
+  openOP(id);
+}
+
+// ═══════════ ORDER PANEL ═══════════
+function openOP(tableId) {
+  currentTableId = tableId;
+  document.getElementById('order-panel').classList.add('open');
+  renderOP(tableId);
+}
+function closeOP() {
+  document.getElementById('order-panel').classList.remove('open');
+  currentTableId = null;
+  refreshPOSGrid();
+}
+
+function renderOP(tableId) {
+  const num = tableId.replace('t','');
+  const ord = orders[tableId];
+  document.getElementById('op-title').textContent = `🪑 Bàn ${num}`;
+  document.getElementById('op-meta').textContent = ord&&ord.mergeLog&&ord.mergeLog.length
+    ? `(gộp từ: ${[...new Set((ord.mergeLog||[]).filter(l=>l.action==='merge'||l.action==='drag-merge').map(l=>l.fromTableNum))].join(', ')})`
+    : '';
+  const body = document.getElementById('op-body');
+  if (!ord||!ord.items||!ord.items.length) {
+    body.innerHTML = '<div class="empty">Chưa có món nào<br>Nhấn "+ Thêm món"</div>';
+    document.getElementById('op-total').textContent = '0 ₫'; return;
+  }
+
+  // Merge same item (same name+size+toppings → sum qty)
+  const merged = mergeOrderItems(ord.items);
+  body.innerHTML = merged.map((it,idx)=>`
+    <div class="oi">
+      <div class="oi-info">
+        <div class="oi-name">${it.name}${it.qty>1?`<span class="qty-badge">×${it.qty}</span>`:''}</div>
+        <div class="oi-meta">
+          ${it.size?`📏${it.size} `:''} 
+          ${(it.toppings||[]).length?'🫧'+it.toppings.join(','):''}
+          ${it.orderBy?`👤${displayName(it.orderBy)}`:''}
+        </div>
+      </div>
+      <div class="oi-right">
+        <div class="oi-price">${fmtMoney(it.price*it.qty)}</div>
+        <div class="qty-ctrl">
+          <button class="qty-btn" onclick="changeQty('${tableId}',${idx},-1)">−</button>
+          <span class="qty-num">${it.qty}</span>
+          <button class="qty-btn" onclick="changeQty('${tableId}',${idx},1)">+</button>
+        </div>
+        <button class="btn btn-red btn-xs" onclick="removeItem('${tableId}',${idx})">✕</button>
+      </div>
+    </div>`).join('');
+  document.getElementById('op-total').textContent = fmtMoney(calcTotal(ord));
+}
+
+function mergeOrderItems(itemsArr) {
+  // Group by (name+size+toppings) and sum qty
+  const map = {};
+  itemsArr.forEach(it => {
+    const key = [it.name, it.size||'', (it.toppings||[]).sort().join('|')].join('__');
+    if (!map[key]) map[key] = {...it, qty: it.qty||1};
+    else map[key].qty += (it.qty||1);
+  });
+  return Object.values(map);
+}
+
+async function changeQty(tableId, idx, delta) {
+  const ord = orders[tableId]; if (!ord) return;
+  const merged = mergeOrderItems(ord.items);
+  const target = merged[idx];
+  if (!target) return;
+  const oldQty = target.qty;
+  const newQty = Math.max(1, oldQty + delta);
+  if (newQty === oldQty) return;
+
+  const tkey = [target.name, target.size||'', (target.toppings||[]).slice().sort().join('|')].join('__');
+
+  // Gom tất cả items trùng key thành 1 item duy nhất (dedup), rồi set qty = newQty
+  const same = [];
+  const others = [];
+  ord.items.forEach(it => {
+    const k = [it.name, it.size||'', (it.toppings||[]).slice().sort().join('|')].join('__');
+    if (k === tkey) same.push(it);
+    else others.push(it);
+  });
+  if (!same.length) return;
+  // Giữ 1 item duy nhất, set qty = newQty
+  const keep = { ...same[0], qty: newQty };
+  ord.items = [...others, keep];
+
+  await saveOrder(tableId, ord);
+  await logHistory(tableId, `Đổi SL: ${target.name}${target.size?' ('+target.size+')':''} ${oldQty} → ${newQty}`);
+}
+
+async function removeItem(tableId, idx) {
+  const ord = orders[tableId]; if (!ord) return;
+  const merged = mergeOrderItems(ord.items);
+  const target = merged[idx];
+  if (!target) return;
+  if (!confirm(`Xoá món "${target.name}${target.size?' ('+target.size+')':''}" × ${target.qty}?`)) return;
+  const tkey = [target.name, target.size||'', (target.toppings||[]).slice().sort().join('|')].join('__');
+  await logHistory(tableId, `Xoá món: ${target.name}${target.size?' ('+target.size+')':''} × ${target.qty}`);
+  ord.items = ord.items.filter(it => {
+    const k = [it.name, it.size||'', (it.toppings||[]).slice().sort().join('|')].join('__');
+    return k !== tkey;
+  });
+  await saveOrder(tableId, ord);
+  toast(`Đã xoá: ${target.name}`, 'ok');
+}
+
+async function saveOrder(tableId, ordData) {
+  const { doc, setDoc, serverTimestamp } = window._firebase;
+  // Tạo sessionId mới nếu order chưa có (bàn trống trước đó)
+  const sessionId = ordData.sessionId || `${tableId}_${Date.now()}`;
+  const data = {
+    tableId,
+    sessionId,
+    items: ordData.items||[],
+    staffEmail: ordData.staffEmail||currentUser?.email||'',
+    staffName: ordData.staffName||displayName(ordData.staffEmail||currentUser?.email||''),
+    mergeLog: ordData.mergeLog||[],
+    createdAt: ordData.createdAt||serverTimestamp(),
+    updatedAt: serverTimestamp()
+  };
+  await setDoc(doc(window._db,'orders',tableId), data);
+  return sessionId;
+}
+
+function calcTotal(ord) {
+  if (!ord||!ord.items) return 0;
+  return ord.items.reduce((s,it)=>s+(it.price*(it.qty||1)),0);
+}
+
+// ═══════════ MENU MODAL (POS) ═══════════
+// ═══════════ MENU MODAL - giỏ tạm, xác nhận mới save ═══════════
+let cartDraft = []; // Giỏ tạm trong modal, chưa commit Firebase
+
+function openMenuModal() {
+  if (!currentTableId) return;
+  selectedToppings = [];
+  cartDraft = []; // reset giỏ mỗi lần mở
+  const toppingGroup = groups.find(g=>g.name&&g.name.toLowerCase()==='topping');
+  const nonToppingGroups = groups.filter(g=>!g.name||g.name.toLowerCase()!=='topping');
+  const toppings = toppingGroup ? items.filter(i=>i.groupId===toppingGroup.id) : [];
+  if (!nonToppingGroups.length) return toast('Chưa có món nào. Vào Quản lý món thêm trước.','err');
+
+  openModal(`
+    <div class="modal modal-lg" onclick="event.stopPropagation()" style="display:flex;flex-direction:column;max-height:90vh">
+      <div class="modal-title" style="flex-shrink:0"><h3>Chọn món – Bàn ${currentTableId.replace('t','')}</h3><button class="modal-close" onclick="cancelMenuModal()">✕</button></div>
+      <div class="tabs" id="menu-modal-tabs" style="flex-shrink:0">
+        ${nonToppingGroups.map((g,i)=>`<div class="tab ${i===0?'active':''}" onclick="switchMenuGroup('${g.id}',this)">${g.name}</div>`).join('')}
+      </div>
+      <div style="flex:1;overflow-y:auto;margin-bottom:10px">
+        <div id="menu-modal-items"></div>
+        ${toppings.length?`
+          <div style="margin-top:14px">
+            <div style="font-size:12px;color:var(--text3);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px">🫧 Topping (chọn kèm món kế tiếp)</div>
+            <div class="topping-wrap" id="topping-wrap">
+              ${toppings.map(t=>`<div class="tchip" onclick="toggleTopping('${t.id}','${t.name}',${t.price},this)">${t.name} <span style="color:var(--accent)">${fmtMoney(t.price)}</span></div>`).join('')}
+            </div>
+          </div>`:''}
+      </div>
+      <!-- CART DRAFT -->
+      <div style="flex-shrink:0;border-top:2px solid var(--accent);padding-top:12px;background:var(--surface)">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+          <div style="font-size:13px;font-weight:700;color:var(--cream)">🛒 Đã chọn (<span id="cart-count">0</span>)</div>
+          <div style="font-size:14px;font-weight:700;color:var(--accent2)" id="cart-total">0 ₫</div>
+        </div>
+        <div id="cart-draft-list" style="max-height:140px;overflow-y:auto;margin-bottom:10px"></div>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-outline btn-sm" style="flex:1" onclick="cancelMenuModal()">Hủy</button>
+          <button class="btn btn-gold btn-sm" style="flex:2" onclick="confirmCartDraft()">✅ Xác nhận thêm</button>
+        </div>
+      </div>
+    </div>`);
+  switchMenuGroup(nonToppingGroups[0].id, null);
+  renderCartDraft();
+}
+
+function cancelMenuModal() {
+  if (cartDraft.length > 0) {
+    if (!confirm(`Bạn có ${cartDraft.length} món chưa xác nhận. Huỷ và bỏ hết?`)) return;
+  }
+  cartDraft = [];
+  selectedToppings = [];
+  closeModal();
+}
+
+function switchMenuGroup(gid, tabEl) {
+  if (tabEl) {
+    document.querySelectorAll('#menu-modal-tabs .tab').forEach(t=>t.classList.remove('active'));
+    tabEl.classList.add('active');
+  }
+  const gItems = items.filter(i=>i.groupId===gid);
+  const area = document.getElementById('menu-modal-items');
+  if (!area) return;
+  if (!gItems.length) { area.innerHTML='<div class="empty">Nhóm chưa có món</div>'; return; }
+
+  const byName = {};
+  gItems.forEach(it=>{ if (!byName[it.name]) byName[it.name]=[]; byName[it.name].push(it); });
+
+  area.innerHTML = `<div class="menu-grid">
+    ${Object.entries(byName).map(([name, sizes])=>{
+      if (sizes.length===1) {
+        const it = sizes[0];
+        return `<div class="mi" onclick="handleMenuItemClick('${it.id}')">
+          <div class="mi-name">${name}</div>
+          ${it.size?`<div class="mi-size">${it.size}</div>`:''}
+          <div class="mi-price">${fmtMoney(it.price)}</div>
+        </div>`;
+      }
+      return `<div class="mi" onclick="openSizePickerByName('${gid}','${safeId(name)}','${encodeURIComponent(name)}')">
+        <div class="mi-name">${name}</div>
+        <div class="mi-size">${sizes.length} sizes</div>
+        <div class="mi-price">${fmtMoney(Math.min(...sizes.map(s=>s.price)))}+</div>
+      </div>`;
+    }).join('')}
+  </div>`;
+}
+
+function openSizePickerByName(groupId, idHash, encodedName) {
+  const name = decodeURIComponent(encodedName);
+  const sizes = items.filter(i => i.groupId === groupId && i.name === name);
+  if (!sizes.length) return;
+  openModal(`
+    <div class="modal" onclick="event.stopPropagation()">
+      <div class="modal-title"><h3>Chọn size: ${escapeHTML(name)}</h3><button class="modal-close" onclick="backToMenuModal()">← Quay lại</button></div>
+      <div class="size-grid">
+        ${sizes.map(s=>`<div class="size-opt" onclick="handleSizePick('${s.id}')">
+          <div class="s-name">${s.size||'Mặc định'}</div>
+          <div class="s-price">${fmtMoney(s.price)}</div>
+        </div>`).join('')}
+      </div>
+    </div>`);
+}
+
+function backToMenuModal() {
+  // Mở lại modal menu với giỏ tạm còn nguyên
+  const savedCart = [...cartDraft];
+  const savedToppings = [...selectedToppings];
+  closeModal();
+  openMenuModalPreserve(savedCart, savedToppings);
+}
+
+function openMenuModalPreserve(savedCart, savedToppings) {
+  openMenuModal();
+  cartDraft = savedCart;
+  selectedToppings = savedToppings;
+  // Restore topping UI
+  setTimeout(() => {
+    selectedToppings.forEach(t => {
+      document.querySelectorAll('.tchip').forEach(el => {
+        if (el.textContent.startsWith(t.name)) el.classList.add('sel');
+      });
+    });
+    renderCartDraft();
+  }, 50);
+}
+
+function handleSizePick(itemId) {
+  handleMenuItemClick(itemId);
+  // Quay lại modal menu
+  backToMenuModal();
+}
+
+function handleMenuItemClick(itemId) {
+  addToCartDraft(itemId);
+}
+
+function toggleTopping(id, name, price, el) {
+  el.classList.toggle('sel');
+  if (el.classList.contains('sel')) selectedToppings.push({id, name, price});
+  else selectedToppings = selectedToppings.filter(t=>t.id!==id);
+}
+
+// Thêm vào giỏ tạm (KHÔNG ghi Firebase)
+function addToCartDraft(itemId) {
+  const item = items.find(i=>i.id===itemId);
+  if (!item) return;
+  const toppingCost = selectedToppings.reduce((s,t)=>s+t.price, 0);
+  const toppingNames = selectedToppings.map(t=>t.name);
+
+  const newKey = [item.name, item.size||'', [...toppingNames].sort().join('|')].join('__');
+  const existing = cartDraft.find(it => {
+    const k = [it.name, it.size||'', (it.toppings||[]).slice().sort().join('|')].join('__');
+    return k === newKey;
+  });
+
+  if (existing) {
+    existing.qty = (existing.qty||1) + 1;
+  } else {
+    cartDraft.push({
+      itemId, name:item.name, size:item.size||'',
+      price: item.price + toppingCost, basePrice: item.price,
+      toppings: toppingNames, qty: 1,
+    });
+  }
+
+  // Reset topping sau khi thêm món
+  selectedToppings = [];
+  document.querySelectorAll('.tchip.sel').forEach(el=>el.classList.remove('sel'));
+  renderCartDraft();
+  // Flash cart
+  const card = document.getElementById('cart-count');
+  if (card) { card.style.transform='scale(1.3)'; setTimeout(()=>card.style.transform='',200); }
+}
+
+function renderCartDraft() {
+  const list = document.getElementById('cart-draft-list');
+  const countEl = document.getElementById('cart-count');
+  const totalEl = document.getElementById('cart-total');
+  if (!list) return;
+  if (!cartDraft.length) {
+    list.innerHTML = '<div style="text-align:center;color:var(--text3);padding:12px;font-size:12px">Chọn món để thêm vào giỏ...</div>';
+    if (countEl) countEl.textContent = '0';
+    if (totalEl) totalEl.textContent = '0 ₫';
+    return;
+  }
+  list.innerHTML = cartDraft.map((it,idx)=>`
+    <div style="display:flex;align-items:center;gap:8px;padding:6px 8px;background:var(--surface2);border-radius:7px;margin-bottom:4px;font-size:12px">
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:600">${escapeHTML(it.name)}${it.size?' ('+escapeHTML(it.size)+')':''}</div>
+        ${it.toppings&&it.toppings.length?`<div style="font-size:10px;color:var(--text3)">+ ${it.toppings.join(', ')}</div>`:''}
+      </div>
+      <div style="display:flex;align-items:center;gap:4px">
+        <button class="qty-btn" style="width:22px;height:22px;font-size:13px" onclick="draftChangeQty(${idx},-1)">−</button>
+        <span style="min-width:18px;text-align:center;font-weight:700">${it.qty}</span>
+        <button class="qty-btn" style="width:22px;height:22px;font-size:13px" onclick="draftChangeQty(${idx},1)">+</button>
+      </div>
+      <div style="color:var(--accent);font-weight:600;min-width:65px;text-align:right">${fmtMoney(it.price*it.qty)}</div>
+      <button class="btn btn-red btn-xs" style="padding:2px 6px" onclick="draftRemove(${idx})">✕</button>
+    </div>
+  `).join('');
+  const total = cartDraft.reduce((s,it)=>s+it.price*it.qty, 0);
+  const count = cartDraft.reduce((s,it)=>s+it.qty, 0);
+  if (countEl) countEl.textContent = count;
+  if (totalEl) totalEl.textContent = fmtMoney(total);
+}
+
+function draftChangeQty(idx, delta) {
+  if (!cartDraft[idx]) return;
+  cartDraft[idx].qty = Math.max(1, cartDraft[idx].qty + delta);
+  renderCartDraft();
+}
+
+function draftRemove(idx) {
+  cartDraft.splice(idx, 1);
+  renderCartDraft();
+}
+
+// XÁC NHẬN - giờ mới ghi Firebase
+async function confirmCartDraft() {
+  if (!cartDraft.length) return toast('Chưa chọn món nào','err');
+  const tableId = currentTableId;
+  const ord = orders[tableId] || { tableId, items:[], staffEmail:currentUser.email, staffName:displayName(currentUser.email), mergeLog:[] };
+  ord.items = ord.items || [];
+
+  // Merge cartDraft vào ord.items
+  for (const cartItem of cartDraft) {
+    const cartKey = [cartItem.name, cartItem.size||'', (cartItem.toppings||[]).slice().sort().join('|')].join('__');
+    const existing = ord.items.find(it => {
+      const k = [it.name, it.size||'', (it.toppings||[]).slice().sort().join('|')].join('__');
+      return k === cartKey;
+    });
+    if (existing) {
+      existing.qty = (existing.qty||1) + cartItem.qty;
+    } else {
+      ord.items.push({ ...cartItem, orderBy:currentUser.email, orderByName:displayName(currentUser.email), addedAt:new Date().toISOString() });
+    }
+  }
+
+  // saveOrder trả về sessionId (tạo mới nếu bàn trống, giữ cũ nếu đang có order)
+  const sessionId = await saveOrder(tableId, ord);
+
+  // Log từng món với sessionId chính xác
+  for (const it of cartDraft) {
+    await logHistory(tableId, `Thêm: ${it.name}${it.size?' ('+it.size+')':''}${it.toppings&&it.toppings.length?' + '+it.toppings.join(','):''} × ${it.qty}`, sessionId);
+  }
+  toast(`✅ Đã thêm ${cartDraft.reduce((s,it)=>s+it.qty,0)} món vào Bàn ${tableId.replace('t','')}`, 'ok');
+  cartDraft = [];
+  selectedToppings = [];
+  closeModal();
+}
+
+// Giữ hàm addToOrder cũ cho tương thích (không dùng nữa)
+async function addToOrder(itemId) {
+  addToCartDraft(itemId);
+}
+
+// ═══════════ MERGE ═══════════
+function openMergeModal() {
+  if (!currentTableId) return;
+  const masterNum = currentTableId.replace('t','');
+  const tc = shopConfig.tableCount||20;
+  const tables = [];
+  for (let i=1;i<=tc;i++) tables.push('t'+i);
+
+  openModal(`
+    <div class="modal" onclick="event.stopPropagation()">
+      <div class="modal-title"><h3>🔗 Gộp bàn → Bàn ${masterNum}</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
+      <p style="font-size:13px;color:var(--text2);margin-bottom:4px">Chọn bàn muốn gộp. Toàn bộ món chuyển sang <strong style="color:var(--accent)">Bàn ${masterNum}</strong>, bàn kia giải phóng.</p>
+      <p style="font-size:11px;color:var(--text3);margin-bottom:14px">🟢 = đang có khách</p>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:16px">
+        ${tables.filter(id=>id!==currentTableId).map(id=>{
+          const num=id.replace('t','');
+          const has=!!orders[id];
+          return `<div class="tchip${has?' sel':''}" id="ms-${id}" onclick="this.classList.toggle('sel')" style="${has?'border-color:var(--green);color:var(--green)':''}">Bàn ${num}${has?' 🟢':''}</div>`;
+        }).join('')}
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-outline btn-sm" onclick="closeModal()">Hủy</button>
+        <button class="btn btn-gold btn-sm" onclick="doMerge()">✅ Gộp bàn</button>
+      </div>
+    </div>`);
+}
+
+async function doMerge() {
+  const selected = Array.from(document.querySelectorAll('[id^="ms-"].sel')).map(el=>el.id.replace('ms-',''));
+  if (!selected.length) return toast('Chọn ít nhất 1 bàn','err');
+  const { doc, deleteDoc } = window._firebase;
+  const master = orders[currentTableId]||{tableId:currentTableId,items:[],staffEmail:currentUser.email,staffName:displayName(currentUser.email),mergeLog:[]};
+  master.items = master.items||[]; master.mergeLog = master.mergeLog||[];
+
+  for (const sid of selected) {
+    const slave = orders[sid];
+    if (slave&&slave.items) {
+      master.items.push(...slave.items.map(it=>({...it, fromTable:sid, fromTableNum:sid.replace('t','')})));
+    }
+    master.mergeLog.push({action:'merge', fromTable:sid, fromTableNum:sid.replace('t',''), by:currentUser.email, at:new Date().toISOString()});
+    try { await deleteDoc(doc(window._db,'orders',sid)); } catch(e){}
+    await logHistory(sid, `Gộp vào Bàn ${currentTableId.replace('t','')} bởi ${displayName(currentUser.email)}`);
+  }
+  await saveOrder(currentTableId, master);
+  await logHistory(currentTableId, `Gộp bàn ${selected.map(id=>'Bàn '+id.replace('t','')).join(',')} vào bởi ${displayName(currentUser.email)}`);
+  toast(`✅ Đã gộp ${selected.map(id=>'Bàn '+id.replace('t','')).join(', ')} → Bàn ${currentTableId.replace('t','')}`, 'ok');
+  closeModal(); renderOP(currentTableId);
+}
+
+async function confirmMerge(fromId, toId) {
+  if (!confirm(`Gộp Bàn ${fromId.replace('t','')} → Bàn ${toId.replace('t','')}?\nToàn bộ món chuyển sang, Bàn ${fromId.replace('t','')} sẽ trống.`)) return;
+  const { doc, deleteDoc } = window._firebase;
+  const master = orders[toId]||{tableId:toId,items:[],staffEmail:currentUser.email,staffName:displayName(currentUser.email),mergeLog:[]};
+  master.items = master.items||[]; master.mergeLog = master.mergeLog||[];
+  const slave = orders[fromId];
+  if (slave&&slave.items) master.items.push(...slave.items.map(it=>({...it, fromTable:fromId, fromTableNum:fromId.replace('t','')})));
+  master.mergeLog.push({action:'drag-merge', fromTable:fromId, fromTableNum:fromId.replace('t',''), by:currentUser.email, at:new Date().toISOString()});
+  try { await deleteDoc(doc(window._db,'orders',fromId)); } catch(e){}
+  await saveOrder(toId, master);
+  await logHistory(fromId, `Gộp vào Bàn ${toId.replace('t','')} (kéo thả) bởi ${displayName(currentUser.email)}`);
+  await logHistory(toId, `Nhận gộp từ Bàn ${fromId.replace('t','')} bởi ${displayName(currentUser.email)}`);
+  toast(`✅ Gộp Bàn ${fromId.replace('t','')} → Bàn ${toId.replace('t','')}`, 'ok');
+  if (currentTableId===toId) renderOP(toId);
+}
+
+// ═══════════ CHECKOUT ═══════════
+function openCheckout() {
+  if (!currentTableId) return;
+  const ord = orders[currentTableId];
+  if (!ord||!ord.items||!ord.items.length) return toast('Chưa có món','err');
+  const total = calcTotal(ord);
+  const merged = mergeOrderItems(ord.items);
+
+  openModal(`
+    <div class="modal" onclick="event.stopPropagation()">
+      <div class="modal-title"><h3>💳 Tính tiền – Bàn ${currentTableId.replace('t','')}</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
+      <div style="margin-bottom:14px;max-height:220px;overflow-y:auto">
+        ${merged.map(it=>`<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border);font-size:13px">
+          <span>${it.name}${it.size?' ('+it.size+')':''}${it.toppings&&it.toppings.length?' +'+it.toppings.join(','):''} ×${it.qty}</span>
+          <span style="color:var(--accent)">${fmtMoney(it.price*it.qty)}</span>
+        </div>`).join('')}
+      </div>
+      <div style="display:flex;justify-content:space-between;font-size:17px;font-weight:700;color:var(--accent2);margin-bottom:16px">
+        <span>TỔNG</span><span>${fmtMoney(total)}</span>
+      </div>
+      <div class="input-row">
+        <div class="field"><label>Tiền khách đưa (₫)</label><input class="inp" type="number" id="cash-in" placeholder="${total}" oninput="calcChange(${total})"></div>
+        <div class="field" style="display:flex;align-items:flex-end"><div id="change-disp" style="font-size:14px;font-weight:600;padding-bottom:14px"></div></div>
+      </div>
+      <div class="modal-footer" style="flex-wrap:wrap;gap:8px">
+        <button class="btn btn-outline btn-sm" onclick="closeModal()">Hủy</button>
+        ${shopConfig.bankNum?`<button class="btn btn-blue btn-sm" onclick="showQR(${total})">📱 QR</button>`:''}
+        <button class="btn btn-ghost btn-sm" onclick="doPrint()">🖨️ In HĐ</button>
+        <button class="btn btn-green btn-sm" onclick="doCheckout()">✅ Thanh toán</button>
+      </div>
+    </div>`);
+}
+
+function calcChange(total) {
+  const given = parseInt(document.getElementById('cash-in').value)||0;
+  const change = given - total;
+  document.getElementById('change-disp').innerHTML = change >= 0
+    ? `<span style="color:var(--green)">Thừa: ${fmtMoney(change)}</span>`
+    : `<span style="color:var(--red)">Thiếu: ${fmtMoney(-change)}</span>`;
+}
+
+function showQR(total) {
+  const b = (shopConfig.bankNum||'').replace(/\s/g,'');
+  const bn = shopConfig.bankName||'';
+  const bank = (shopConfig.bank||'').toUpperCase().trim();
+  const desc = `BAN${currentTableId.replace('t','')}`;
+
+  // VietQR API: https://img.vietqr.io/image/{BANK}-{ACCOUNT}-compact2.png?amount=&addInfo=&accountName=
+  // BANK có thể là tên viết tắt: VCB, TCB, TPB, ACB, MB, BIDV, VPB, SHB, EIB, OCB, MSB, NAB, HDB, SCB...
+  const qrUrl = `https://img.vietqr.io/image/${encodeURIComponent(bank)}-${encodeURIComponent(b)}-compact2.png?amount=${total}&addInfo=${encodeURIComponent(desc)}&accountName=${encodeURIComponent(bn)}`;
+
+  openModal(`
+    <div class="modal" onclick="event.stopPropagation()">
+      <div class="modal-title"><h3>📱 Quét QR thanh toán</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
+      <div style="text-align:center;padding:8px">
+        <img src="${qrUrl}" style="max-width:280px;width:100%;border-radius:12px;background:#fff;padding:8px"
+          onerror="this.outerHTML='<div style=padding:30px;color:var(--red)>❌ Không tải được QR.<br><br>Kiểm tra Cấu hình:<br>• <b>Ngân hàng</b> phải là mã viết tắt (VCB, TCB, MB, BIDV, ACB, VPB, TPB, SHB...)<br>• <b>Số tài khoản</b> đúng định dạng</div>'">
+        <div style="margin-top:14px;font-size:13px;color:var(--text2);line-height:1.7">
+          <div><strong>${bank}</strong> · ${b}</div>
+          <div>${bn}</div>
+          <div style="font-size:18px;font-weight:700;color:var(--accent2);margin-top:8px">${fmtMoney(total)}</div>
+          <div style="font-size:11px;color:var(--text3);margin-top:4px">Nội dung: ${desc}</div>
+        </div>
+      </div>
+    </div>`);
+}
+
+async function doCheckout() {
+  const tableId = currentTableId;
+  const ord = orders[tableId]; if (!ord) return;
+  const total = calcTotal(ord);
+  const tableNum = tableId.replace('t','');
+  const sessionId = ord.sessionId || `${tableId}_${Date.now()}`;
+
+  if (!confirm(`Xác nhận thanh toán Bàn ${tableNum}?\n\nTổng tiền: ${fmtMoney(total)}\n\nBàn sẽ được giải phóng sau khi thanh toán.`)) return;
+
+  const { collection, addDoc, doc, deleteDoc, serverTimestamp } = window._firebase;
+  // Lưu vào history với sessionId để nhóm log theo phiên
+  await addDoc(collection(window._db,'history'), {
+    tableId, tableNum, sessionId,
+    items: ord.items||[], total,
+    staffEmail: ord.staffEmail,
+    staffName: displayName(ord.staffEmail||''),
+    mergeLog: ord.mergeLog||[],
+    openedAt: ord.createdAt||null,
+    closedAt: serverTimestamp(),
+    closedBy: currentUser.email,
+    closedByName: displayName(currentUser.email),
+    type: 'checkout'
+  });
+  await logHistory(tableId, `Thanh toán ${fmtMoney(total)}`, sessionId);
+  await deleteDoc(doc(window._db,'orders',tableId));
+  closeModal(); closeOP();
+  toast(`✅ Thanh toán xong! Bàn ${tableNum} đã trống.`, 'ok');
+}
+
+// ═══════════ PRINT (chuẩn cho cả mobile và desktop) ═══════════
+function doPrint() {
+  const tableId = currentTableId;
+  const ord = orders[tableId]; if (!ord) return;
+  const total = calcTotal(ord);
+  const merged = mergeOrderItems(ord.items);
+  const shop = shopConfig;
+  const now = new Date().toLocaleString('vi-VN');
+
+  // Receipt nội dung (phần in ra giấy)
+  const receiptBody = `
+<div class="receipt">
+  <div class="c b lg">${escapeHTML(shop.name||'CafeShop')}</div>
+  ${shop.address?`<div class="c note">${escapeHTML(shop.address)}</div>`:''}
+  ${shop.phone?`<div class="c note">DT: ${escapeHTML(shop.phone)}</div>`:''}
+  <hr>
+  <div class="c b big">HOA DON THANH TOAN</div>
+  <div class="c">Ban: ${tableId.replace('t','')} | ${now}</div>
+  <div class="c">NV: ${escapeHTML(displayName(ord.staffEmail||''))}</div>
+  ${ord.mergeLog&&ord.mergeLog.length?`<div class="c note">(Da gop: ${[...new Set(ord.mergeLog.map(l=>l.fromTableNum).filter(Boolean))].map(n=>'Ban '+n).join(', ')})</div>`:''}
+  <hr>
+  ${merged.map(it=>`<div class="row">
+    <span class="l">${escapeHTML(it.name)}${it.size?' ('+escapeHTML(it.size)+')':''}${it.toppings&&it.toppings.length?' +'+escapeHTML(it.toppings.join(',')):''} x${it.qty}</span>
+    <span class="r">${(it.price*it.qty).toLocaleString('vi-VN')}</span>
+  </div>`).join('')}
+  <hr>
+  <div class="row b big"><span class="l">TONG CONG</span><span class="r">${total.toLocaleString('vi-VN')} d</span></div>
+  <hr>
+  <div class="foot">${escapeHTML(shop.footer||'Cam on quy khach!')}<br>Hen gap lai!</div>
+</div>`;
+
+  const receiptHTML = `<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Hoá đơn Bàn ${tableId.replace('t','')}</title>
+<style>
+/* Kích thước chuẩn cho máy in nhiệt 80mm, fallback 58mm cũng ok */
+@page { size: 80mm auto; margin: 0 !important; padding: 0 !important; }
+
+* { margin: 0; padding: 0; box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+body {
+  background: #ccc;
+  font-family: 'Courier New', 'Consolas', monospace;
+  min-height: 100vh;
+}
+.receipt {
+  background: #fff;
+  color: #000;
+  width: 80mm;
+  margin: 10px auto;
+  padding: 3mm 2mm;
+  font-size: 12px;
+  line-height: 1.35;
+  box-shadow: 0 4px 16px rgba(0,0,0,.25);
+}
+.c { text-align: center; }
+.b { font-weight: bold; }
+.big { font-size: 14px; }
+.lg { font-size: 16px; }
+hr { border: none; border-top: 1px dashed #000; margin: 4px 0; }
+.row { display: flex; justify-content: space-between; gap: 6px; margin: 2px 0; }
+.row .l { flex: 1; word-break: break-word; }
+.row .r { white-space: nowrap; }
+.foot { text-align: center; margin-top: 6px; font-style: italic; }
+.note { font-size: 10px; }
+
+.print-bar {
+  position: sticky; top: 0; background: #2a2a2a;
+  padding: 10px; display: flex; gap: 8px; justify-content: center;
+  box-shadow: 0 2px 8px rgba(0,0,0,.3); z-index: 100;
+}
+.print-bar button {
+  padding: 12px 22px; font-size: 15px; font-weight: 700;
+  border: none; border-radius: 10px; cursor: pointer;
+  font-family: -apple-system, system-ui, sans-serif;
+}
+.pb-print { background: #22c55e; color: #fff; }
+.pb-close { background: #888; color: #fff; }
+
+@media print {
+  html, body {
+    width: 80mm !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+  }
+  body { background: #fff !important; }
+  .print-bar { display: none !important; }
+  .receipt {
+    box-shadow: none !important;
+    margin: 0 !important;
+    padding: 2mm 2mm !important;
+    width: 80mm !important;
+    max-width: 80mm !important;
+    page-break-inside: avoid;
+  }
+  @page { size: 80mm auto; margin: 0 !important; }
+}
+</style>
+</head>
+<body>
+<div class="print-bar">
+  <button class="pb-print" onclick="window.print()">🖨️ IN HOÁ ĐƠN</button>
+  <button class="pb-close" onclick="window.close()">Đóng</button>
+</div>
+${receiptBody}
+<script>
+// Tự động trigger print sau khi load (chỉ desktop mới hiệu quả, mobile user phải bấm tay)
+window.addEventListener('load', function(){
+  setTimeout(function(){
+    try { window.print(); } catch(e){}
+  }, 300);
+});
+</`+`script>
+</body>
+</html>`;
+
+  // MỞ TAB MỚI (hoạt động trên cả iOS Safari, Android Chrome, Desktop)
+  const w = window.open('', '_blank');
+  if (!w) {
+    toast('❌ Trình duyệt chặn popup! Vào Cài đặt → cho phép popup cho trang này', 'err');
+    return;
+  }
+  w.document.open();
+  w.document.write(receiptHTML);
+  w.document.close();
+  toast('🖨️ Mở tab in hoá đơn...', 'info');
+}
+
+function escapeHTML(s) {
+  return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// ═══════════ HISTORY LOGGING ═══════════
+async function logHistory(tableId, action, overrideSessionId) {
+  try {
+    const { collection, addDoc, serverTimestamp } = window._firebase;
+    // Lấy sessionId từ order hiện tại, hoặc từ tham số override
+    const sessionId = overrideSessionId || orders[tableId]?.sessionId || `${tableId}_unknown`;
+    await addDoc(collection(window._db,'actlog'), {
+      tableId,
+      tableNum: tableId.replace('t',''),
+      sessionId,
+      action,
+      by: currentUser?.email||'system',
+      byName: displayName(currentUser?.email||'system'),
+      at: serverTimestamp()
+    });
+  } catch(e){
+    console.error('logHistory error:', e);
+  }
+}
+
+// ═══════════ HISTORY PAGE ═══════════
+async function renderHistory() {
+  document.getElementById('main').innerHTML = `
+    <div class="ph">
+      <div><h2 class="ph-title">📋 Lịch sử</h2></div>
+    </div>
+    <div class="filter-bar">
+      <div class="field" style="margin:0;min-width:120px"><label>Bàn</label>
+        <select class="inp inp-sm" id="flt-table">
+          <option value="">Tất cả</option>
+          ${Array.from({length:shopConfig.tableCount||20},(_,i)=>`<option value="t${i+1}">Bàn ${i+1}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field" style="margin:0"><label>Từ ngày</label><input class="inp inp-sm" type="date" id="flt-from"></div>
+      <div class="field" style="margin:0"><label>Đến ngày</label><input class="inp inp-sm" type="date" id="flt-to"></div>
+      <div class="field" style="margin:0"><label>Loại</label>
+        <select class="inp inp-sm" id="flt-type">
+          <option value="">Tất cả</option>
+          <option value="checkout">Thanh toán</option>
+          <option value="action">Hành động</option>
+        </select>
+      </div>
+      <div style="display:flex;gap:6px;align-items:flex-end">
+        <button class="btn btn-gold btn-sm" onclick="loadHistory()">🔍 Lọc</button>
+        <button class="btn btn-outline btn-sm" onclick="clearFilter()">✕ Xoá lọc</button>
+        <button class="btn btn-red btn-sm" onclick="confirmClearHistory()">🗑 Xoá tất cả</button>
+      </div>
+    </div>
+    <div id="hist-area"><div class="spinner"></div></div>`;
+  loadHistory();
+}
+
+async function loadHistory() {
+  const { collection, getDocs, query, orderBy } = window._firebase;
+  const tblFlt  = document.getElementById('flt-table')?.value||'';
+  const fromDate = document.getElementById('flt-from')?.value;
+  const toDate   = document.getElementById('flt-to')?.value;
+  const typeFlt  = document.getElementById('flt-type')?.value||'';
+  const area = document.getElementById('hist-area');
+  if (!area) return;
+  area.innerHTML = '<div class="spinner"></div>';
+
+  try {
+    // 1. Tải tất cả checkout history
+    const hSnap = await getDocs(query(collection(window._db,'history'), orderBy('closedAt','desc')));
+    const allCheckouts = hSnap.docs.map(d=>({id:d.id,...d.data(),_type:'checkout'}));
+
+    // 2. Tải tất cả action log
+    const aSnap = await getDocs(query(collection(window._db,'actlog'), orderBy('at','asc')));
+    const allLogs = aSnap.docs.map(d=>({id:d.id,...d.data(),_type:'action'}));
+
+    // 3. Nhóm action log theo sessionId
+    const logsBySession = {};
+    allLogs.forEach(d => {
+      const sid = d.sessionId || `${d.tableId}_nosession`;
+      if (!logsBySession[sid]) logsBySession[sid] = [];
+      logsBySession[sid].push(d);
+    });
+
+    // 4. Xây dựng danh sách sessions từ checkouts
+    // Mỗi checkout = 1 session đã đóng
+    let sessions = allCheckouts.map(ck => {
+      const sid = ck.sessionId || `${ck.tableId}_${ck.id}`;
+      const logs = (logsBySession[sid]||[]).sort((a,b)=>{
+        const ta = a.at?.toDate?a.at.toDate().getTime():0;
+        const tb = b.at?.toDate?b.at.toDate().getTime():0;
+        return ta - tb;
+      });
+      // Xoá log "Thanh toán" khỏi log list (đã hiển thị ở checkout block)
+      const filteredLogs = logs.filter(l => !l.action?.startsWith('Thanh toán'));
+      const closedAt = ck.closedAt?.toDate?ck.closedAt.toDate():new Date();
+      return { sessionId:sid, tableId:ck.tableId, tableNum:ck.tableNum||ck.tableId.replace('t',''),
+               checkout:ck, logs:filteredLogs, closedAt, closed:true };
+    });
+
+    // 5. Thêm sessions đang mở (có trong orders realtime)
+    Object.values(orders).forEach(ord => {
+      const sid = ord.sessionId || `${ord.tableId}_open`;
+      if (!sessions.find(s=>s.sessionId===sid)) {
+        const logs = (logsBySession[sid]||[]).sort((a,b)=>{
+          const ta = a.at?.toDate?a.at.toDate().getTime():0;
+          const tb = b.at?.toDate?b.at.toDate().getTime():0;
+          return ta - tb;
+        });
+        sessions.push({ sessionId:sid, tableId:ord.tableId, tableNum:ord.tableId.replace('t',''),
+                        checkout:null, logs, closedAt:new Date(), closed:false });
+      }
+    });
+
+    // 6. Áp dụng filter
+    if (tblFlt) sessions = sessions.filter(s=>s.tableId===tblFlt);
+    if (fromDate) {
+      const from = new Date(fromDate);
+      sessions = sessions.filter(s=>s.closedAt >= from);
+    }
+    if (toDate) {
+      const to = new Date(toDate); to.setHours(23,59,59);
+      sessions = sessions.filter(s=>s.closedAt <= to);
+    }
+    if (typeFlt==='checkout') sessions = sessions.filter(s=>s.closed);
+    if (typeFlt==='action')   sessions = sessions.filter(s=>!s.closed);
+
+    // 7. Sort: mới nhất trước
+    sessions.sort((a,b)=>b.closedAt.getTime()-a.closedAt.getTime());
+
+    if (!sessions.length) { area.innerHTML='<div class="empty">Không có dữ liệu</div>'; return; }
+
+    // 8. Render
+    area.innerHTML = sessions.map((s, idx) => {
+      const elId = `sess_${idx}`;
+      const ck = s.checkout;
+      const merged = ck ? mergeOrderItems(ck.items||[]) : [];
+      const isOpen = !s.closed;
+
+      const headerColor = isOpen ? 'var(--red)' : 'var(--green)';
+      const badge = isOpen
+        ? `<span class="tag tag-red">🔴 Đang phục vụ</span>`
+        : `<span class="tag tag-green">✅ Đã thanh toán</span>`;
+      const timeStr = ck
+        ? fmtDate(ck.closedAt)
+        : (s.logs[0]?.at ? fmtDate(s.logs[0].at) : 'Đang mở');
+      const totalStr = ck ? `<span style="font-weight:700;color:var(--accent2)">${fmtMoney(ck.total||0)}</span>` : '';
+
+      return `
+      <div class="hist-item" style="border-left:3px solid ${headerColor};margin-bottom:12px">
+        <!-- HEADER -->
+        <div class="hist-head" onclick="toggleFolder('${elId}',this)" style="background:var(--surface2)">
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <span style="font-weight:700;font-size:15px">🪑 Bàn ${s.tableNum}</span>
+              ${badge}
+              ${totalStr}
+            </div>
+            <div style="font-size:11px;color:var(--text3);margin-top:2px">${timeStr}</div>
+          </div>
+          <span id="fa-${elId}" style="color:var(--text3);font-size:16px">${isOpen?'▼':'▶'}</span>
+        </div>
+
+        <!-- BODY -->
+        <div class="hist-body${isOpen?' open':''}" id="${elId}" style="padding:10px 12px">
+
+          <!-- TIMELINE LOG -->
+          ${s.logs.length ? `
+            <div style="margin-bottom:10px">
+              ${s.logs.map(l=>{
+                const by = l.byName || displayName(l.by||'') || '?';
+                const timeL = l.at?.toDate ? l.at.toDate().toLocaleTimeString('vi-VN') : '';
+                return `<div style="display:flex;gap:8px;padding:4px 0;border-bottom:1px solid var(--border);font-size:12px">
+                  <span style="color:var(--text3);white-space:nowrap;min-width:60px">${timeL}</span>
+                  <span style="flex:1">${l.action}</span>
+                  <span style="color:var(--accent);white-space:nowrap">${by}</span>
+                </div>`;
+              }).join('')}
+            </div>` : '<div style="font-size:12px;color:var(--text3);margin-bottom:8px">Không có log hành động</div>'}
+
+          <!-- CHECKOUT SUMMARY -->
+          ${ck ? `
+            <div style="background:var(--surface);border:1px solid var(--green);border-radius:8px;padding:10px;margin-top:4px">
+              <div style="font-size:12px;color:var(--green);font-weight:600;margin-bottom:8px">
+                💳 Thanh toán bởi <strong>${displayName(ck.closedBy||ck.closedByName||'')}</strong>
+                &nbsp;·&nbsp; ${fmtDate(ck.closedAt)}
+              </div>
+              ${merged.map(it=>`
+                <div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 0;border-bottom:1px solid var(--border)">
+                  <span>${it.name}${it.size?' ('+it.size+')':''}${it.toppings&&it.toppings.length?' +'+it.toppings.join(','):''} ×${it.qty}</span>
+                  <span style="color:var(--accent)">${fmtMoney(it.price*it.qty)}</span>
+                </div>`).join('')}
+              <div style="display:flex;justify-content:space-between;font-weight:700;font-size:14px;margin-top:8px;padding-top:6px;border-top:2px solid var(--border)">
+                <span>TỔNG</span><span style="color:var(--accent2)">${fmtMoney(ck.total||0)}</span>
+              </div>
+            </div>` : ''}
+
+        </div>
+      </div>`;
+    }).join('');
+
+  } catch(e) {
+    console.error('loadHistory error:', e);
+    area.innerHTML=`<div class="empty">Lỗi tải dữ liệu: ${e.message}</div>`;
+  }
+}
+
+function clearFilter() {
+  document.getElementById('flt-table').value='';
+  document.getElementById('flt-from').value='';
+  document.getElementById('flt-to').value='';
+  document.getElementById('flt-type').value='';
+  loadHistory();
+}
+
+async function confirmClearHistory() {
+  if (!confirm('XOÁ TOÀN BỘ lịch sử? Hành động này không thể hoàn tác!')) return;
+  if (!confirm('Xác nhận lần 2: Bạn thực sự muốn xoá tất cả lịch sử?')) return;
+  toast('Đang xoá... vui lòng chờ','info');
+  const { collection, getDocs, doc, deleteDoc } = window._firebase;
+  const [hs, al] = await Promise.all([getDocs(collection(window._db,'history')), getDocs(collection(window._db,'actlog'))]);
+  const all = [...hs.docs.map(d=>deleteDoc(doc(window._db,'history',d.id))), ...al.docs.map(d=>deleteDoc(doc(window._db,'actlog',d.id)))];
+  await Promise.all(all);
+  toast('Đã xoá toàn bộ lịch sử','ok');
+  loadHistory();
+}
+</script>
+
+<!--
+=== FIREBASE RULES ===
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function isAdmin() { return request.auth != null && request.auth.token.email == 'admin@myapp.com'; }
+    function isStaff() { return request.auth != null; }
+    
+    match /config/{doc} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /groups/{doc} { allow read: if isStaff(); allow write: if isAdmin(); }
+    match /items/{doc}  { allow read: if isStaff(); allow write: if isAdmin(); }
+    match /staff/{doc}  { allow read: if isStaff(); allow write: if isAdmin(); }
+    match /orders/{doc} { allow read, write: if isStaff(); }
+    match /history/{doc}{ allow write: if isStaff(); allow read: if isAdmin(); allow delete: if isAdmin(); }
+    match /actlog/{doc} { allow write: if isStaff(); allow read: if isAdmin(); allow delete: if isAdmin(); }
+    match /notifications/{doc} { allow read, write: if true; }
+    match /{document=**} { allow read, write: if false; }
+  }
+}
+-->
+</body>
+</html>
