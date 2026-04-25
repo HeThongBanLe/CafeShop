@@ -822,6 +822,38 @@ async function loadAllData() {
   staffList = sSnap.docs.map(d => ({id:d.id,...d.data()}));
   subscribeOrders();
   subscribeNotifications();
+  subscribeGroupsAndItems(); // Realtime: admin xoá group/món → cập nhật ngay
+}
+
+function subscribeGroupsAndItems() {
+  const { collection, onSnapshot, query, orderBy } = window._firebase;
+  // Lắng nghe groups
+  onSnapshot(query(collection(window._db,'groups'), orderBy('order','asc')), snap => {
+    snap.docChanges().forEach(ch => {
+      if (ch.type === 'removed') {
+        groups = groups.filter(g => g.id !== ch.doc.id);
+      } else if (ch.type === 'added') {
+        if (!groups.find(g => g.id === ch.doc.id))
+          groups.push({id:ch.doc.id,...ch.doc.data()});
+      } else if (ch.type === 'modified') {
+        groups = groups.map(g => g.id === ch.doc.id ? {id:ch.doc.id,...ch.doc.data()} : g);
+      }
+    });
+    groups.sort((a,b)=>(a.order||0)-(b.order||0));
+  });
+  // Lắng nghe items
+  onSnapshot(collection(window._db,'items'), snap => {
+    snap.docChanges().forEach(ch => {
+      if (ch.type === 'removed') {
+        items = items.filter(i => i.id !== ch.doc.id);
+      } else if (ch.type === 'added') {
+        if (!items.find(i => i.id === ch.doc.id))
+          items.push({id:ch.doc.id,...ch.doc.data()});
+      } else if (ch.type === 'modified') {
+        items = items.map(i => i.id === ch.doc.id ? {id:ch.doc.id,...ch.doc.data()} : i);
+      }
+    });
+  });
 }
 
 function subscribeOrders() {
