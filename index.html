@@ -477,34 +477,35 @@ async function checkStaffAllowed(email) {
   try {
     const { doc, getDoc } = window._firebase;
     const snap = await getDoc(doc(window._db, 'config', 'disabled'));
-    if (!snap.exists()) return true; // No disabled list = allow all
-    const data = snap.data();
-    const list = data.emails || [];
+    if (!snap.exists()) return true;
+    const list = snap.data().emails || [];
     return !list.includes(email);
   } catch(e) {
     console.error('checkStaffAllowed error:', e);
-    return true; // Fallback: allow login
+    return true;
   }
 }
 
 async function applyPendingPassword(user) {
+  // Gọi ngay sau khi login → Firebase chấp nhận updatePassword vì vừa auth xong
   try {
     const { collection, query, where, getDocs, doc, updateDoc, updatePassword } = window._firebase;
-    const q = query(collection(window._db, 'staff'), where('email','==',user.email));
+    const q = query(collection(window._db,'staff'), where('email','==',user.email));
     const snap = await getDocs(q);
     if (snap.empty) return;
     const sdoc = snap.docs[0];
     const data = sdoc.data();
-    if (data.pendingPwd) {
+    if (data.pendingPwd && data.pendingPwd.length >= 6) {
       try {
         await updatePassword(user, data.pendingPwd);
         await updateDoc(doc(window._db,'staff',sdoc.id), {pendingPwd: null});
-        toast('Mật khẩu đã được cập nhật!','ok');
+        toast('🔑 Mật khẩu đã được đổi bởi admin. Lần sau dùng mật khẩu mới!','info');
       } catch(e) {
-        // Cần re-auth, để pending lại
+        console.warn('pendingPwd apply failed:', e.code);
+        // Nếu fail thì giữ nguyên pendingPwd, thử lại lần login sau
       }
     }
-  } catch(e){}
+  } catch(e) { console.error('applyPendingPassword:', e); }
 }
 
 // ═══════════ AUTH ═══════════
@@ -912,8 +913,22 @@ function renderStaff() {
       <div><h2 class="ph-title">Quản lý nhân viên</h2></div>
       <button class="btn btn-gold btn-sm" onclick="openAddStaffModal()">+ Thêm nhân viên</button>
     </div>
+    <div class="card" style="border-color:var(--accent);background:var(--surface2)">
+      <div class="card-title"><span>🔑 Đổi mật khẩu Admin</span></div>
+      <p style="font-size:12px;color:var(--text3);margin-bottom:12px">Đổi mật khẩu tài khoản admin của bạn (${ADMIN_EMAIL})</p>
+      <div class="input-row">
+        <div class="field"><label>Mật khẩu hiện tại</label><input class="inp" type="password" id="admin-old-pwd" placeholder="Mật khẩu hiện tại"></div>
+        <div class="field"><label>Mật khẩu mới</label><input class="inp" type="password" id="admin-new-pwd" placeholder="Tối thiểu 6 ký tự"></div>
+      </div>
+      <button class="btn btn-gold btn-sm" onclick="changeAdminPassword()">🔑 Đổi mật khẩu admin</button>
+    </div>
     <div class="card">
       <div class="card-title"><span>👥 Danh sách nhân viên</span></div>
+      <p style="font-size:12px;color:var(--text3);margin-bottom:14px">
+        ✅ Tạo: thêm vào cả <b>Firebase Auth</b> và <b>Firestore</b><br>
+        🚫 Vô hiệu: không thể login (check mỗi lần đăng nhập)<br>
+        🔑 Đổi mật khẩu: NV login lại bằng mật khẩu cũ → tự động đổi sang mật khẩu mới
+      </p>
       <div id="staff-list-area"><div class="spinner"></div></div>
     </div>`;
   renderStaffList();
@@ -924,36 +939,71 @@ function renderStaffList() {
   if (!area) return;
   if (!staffList.length) { area.innerHTML = '<div class="empty">Chưa có nhân viên nào</div>'; return; }
   area.innerHTML = `<div class="tbl-wrap"><table>
-    <thead><tr><th>Tên đăng nhập</th><th>Họ tên</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
+    <thead><tr><th>Tên đăng nhập</th><th>Họ tên</th><th>Trạng thái</th><th>MK mới</th><th>Thao tác</th></tr></thead>
     <tbody>${staffList.map(s=>{
       const isActive = s.active !== false;
-      return `<tr style="${isActive?'':'opacity:.55'}">
-        <td>${displayName(s.email)}</td>
+      const hasPending = !!s.pendingPwd;
+      return `<tr style="${isActive?'':'opacity:.5'}">
+        <td style="font-weight:600">${displayName(s.email)}</td>
         <td>${s.fullName||'-'}</td>
-        <td>${isActive?'<span class="tag tag-green">Hoạt động</span>':'<span class="tag tag-red">Vô hiệu</span>'}</td>
-        <td style="display:flex;gap:6px;flex-wrap:wrap">
+        <td>${isActive
+          ? '<span class="tag tag-green">✓ Hoạt động</span>'
+          : '<span class="tag tag-red">✗ Vô hiệu</span>'}</td>
+        <td>${hasPending
+          ? '<span class="tag tag-blue" title="NV chưa login lại để áp dụng">⏳ Đang chờ</span>'
+          : '<span style="color:var(--text3);font-size:11px">-</span>'}</td>
+        <td style="display:flex;gap:4px;flex-wrap:wrap">
           <button class="btn btn-ghost btn-xs" onclick="openEditStaff('${s.id}')">✏️ Sửa</button>
           ${isActive
-            ? `<button class="btn btn-red btn-xs" onclick="deactivateStaff('${s.id}','${s.email}')">🚫 Vô hiệu</button>`
-            : `<button class="btn btn-green btn-xs" onclick="reactivateStaff('${s.id}','${s.email}')">✅ Kích hoạt</button>`}
+            ? `<button class="btn btn-red btn-xs" onclick="deactivateStaff('${s.id}','${s.email}')">🚫 Khoá</button>`
+            : `<button class="btn btn-green btn-xs" onclick="reactivateStaff('${s.id}','${s.email}')">✅ Mở</button>`}
         </td>
       </tr>`;
     }).join('')}</tbody>
   </table></div>`;
 }
 
+async function changeAdminPassword() {
+  const oldPwd = document.getElementById('admin-old-pwd').value;
+  const newPwd = document.getElementById('admin-new-pwd').value;
+  if (!oldPwd || !newPwd) return toast('Nhập đủ mật khẩu cũ và mới', 'err');
+  if (newPwd.length < 6) return toast('Mật khẩu mới tối thiểu 6 ký tự', 'err');
+  if (oldPwd === newPwd) return toast('Mật khẩu mới phải khác mật khẩu cũ', 'err');
+  try {
+    const { signInWithEmailAndPassword, updatePassword } = window._firebase;
+    // Re-authenticate với mật khẩu cũ để Firebase chắc chắn
+    await signInWithEmailAndPassword(window._auth, ADMIN_EMAIL, oldPwd);
+    await updatePassword(window._auth.currentUser, newPwd);
+    document.getElementById('admin-old-pwd').value = '';
+    document.getElementById('admin-new-pwd').value = '';
+    toast('✅ Đã đổi mật khẩu admin thành công!', 'ok');
+  } catch(e) {
+    if (e.code === 'auth/wrong-password' || e.code === 'auth/invalid-credential') {
+      toast('❌ Mật khẩu hiện tại sai!', 'err');
+    } else {
+      toast('❌ Lỗi: ' + (e.message||e), 'err');
+    }
+  }
+}
+
 function openAddStaffModal() {
   openModal(`
     <div class="modal" onclick="event.stopPropagation()">
-      <div class="modal-title"><h3>Thêm nhân viên</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
+      <div class="modal-title"><h3>➕ Thêm nhân viên</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
       <div class="field"><label>Tên đăng nhập</label>
-        <div style="position:relative"><input class="inp" id="su" placeholder="VD: nguyenvan"><span class="login-suffix">${DOMAIN}</span></div>
+        <div style="position:relative">
+          <input class="inp" id="su" placeholder="VD: nguyenvan" autocomplete="off">
+          <span class="login-suffix">${DOMAIN}</span>
+        </div>
       </div>
       <div class="field"><label>Họ tên (tuỳ chọn)</label><input class="inp" id="sfn" placeholder="Nguyễn Văn A"></div>
-      <div class="field"><label>Mật khẩu</label><input class="inp" type="password" id="sp" placeholder="Tối thiểu 6 ký tự"></div>
+      <div class="field"><label>Mật khẩu</label><input class="inp" type="password" id="sp" placeholder="Tối thiểu 6 ký tự" autocomplete="new-password"></div>
+      <div style="background:var(--surface2);border-radius:8px;padding:10px;font-size:12px;color:var(--text3);margin-bottom:14px">
+        ℹ️ Tài khoản sẽ được tạo đồng thời trong <b>Firebase Auth</b> và <b>danh sách nhân viên</b>.
+      </div>
       <div class="modal-footer">
         <button class="btn btn-outline btn-sm" onclick="closeModal()">Hủy</button>
-        <button class="btn btn-gold btn-sm" onclick="addStaff()">Tạo tài khoản</button>
+        <button class="btn btn-gold btn-sm" onclick="addStaff()">✅ Tạo tài khoản</button>
       </div>
     </div>`);
 }
@@ -963,24 +1013,40 @@ async function addStaff() {
   const fn = document.getElementById('sfn').value.trim();
   const p = document.getElementById('sp').value;
   if (!u) return toast('Nhập tên đăng nhập','err');
-  if (p.length < 6) return toast('Mật khẩu ≥ 6 ký tự','err');
+  if (p.length < 6) return toast('Mật khẩu tối thiểu 6 ký tự','err');
   if (!u.includes('@')) u += DOMAIN;
-  // Check duplicate
   if (staffList.find(s=>s.email===u && s.active!==false)) return toast('Tài khoản đã tồn tại','err');
+
+  const btn = document.querySelector('.modal .btn-gold');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Đang tạo...'; }
+
   try {
+    // 1. Tạo trong Firebase Auth (secondary app để không đăng xuất admin)
     const { initializeApp, getApps, getAuth, createUserWithEmailAndPassword } = window._firebase;
-    const apps = getApps();
-    const sec = apps.find(a=>a.name==='sec') || initializeApp(window._app.options,'sec');
+    const secAppName = 'sec_' + Date.now();
+    const sec = initializeApp(window._app.options, secAppName);
     const secAuth = getAuth(sec);
     await createUserWithEmailAndPassword(secAuth, u, p);
     await secAuth.signOut();
-    // Write to Firestore staff collection
+
+    // 2. Ghi vào Firestore staff collection
     const { collection, addDoc } = window._firebase;
-    const ref = await addDoc(collection(window._db,'staff'), {email:u, fullName:fn, active:true, createdAt:new Date().toISOString()});
+    const ref = await addDoc(collection(window._db,'staff'), {
+      email: u, fullName: fn, active: true,
+      createdAt: new Date().toISOString(),
+      createdBy: currentUser.email
+    });
     staffList.push({id:ref.id, email:u, fullName:fn, active:true});
-    closeModal(); toast('✅ Đã tạo tài khoản: ' + displayName(u), 'ok');
+    closeModal();
+    toast(`✅ Đã tạo tài khoản: ${displayName(u)}`, 'ok');
     renderStaffList();
-  } catch(e) { toast('Lỗi: '+(e.message||e),'err'); }
+  } catch(e) {
+    const msg = e.code === 'auth/email-already-in-use'
+      ? 'Email đã tồn tại trong Firebase Auth'
+      : (e.message || String(e));
+    toast('❌ Lỗi: ' + msg, 'err');
+    if (btn) { btn.disabled = false; btn.textContent = '✅ Tạo tài khoản'; }
+  }
 }
 
 function openEditStaff(id) {
@@ -988,57 +1054,70 @@ function openEditStaff(id) {
   if (!s) return;
   openModal(`
     <div class="modal" onclick="event.stopPropagation()">
-      <div class="modal-title"><h3>Sửa nhân viên: ${displayName(s.email)}</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
+      <div class="modal-title"><h3>✏️ Sửa: ${displayName(s.email)}</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
       <div class="field"><label>Họ tên</label><input class="inp" id="ef" value="${s.fullName||''}" placeholder="Họ tên"></div>
-      <div class="field"><label>Mật khẩu mới (để trống nếu không đổi)</label><input class="inp" type="password" id="ep" placeholder="Mật khẩu mới"></div>
+      <div class="field">
+        <label>Đặt lại mật khẩu mới</label>
+        <input class="inp" type="password" id="ep" placeholder="Để trống nếu không đổi" autocomplete="new-password">
+        <div style="font-size:11px;color:var(--text3);margin-top:4px">
+          ⚠️ NV cần <b>login lại bằng mật khẩu cũ</b> → hệ thống tự đổi sang mật khẩu mới
+        </div>
+      </div>
       <div class="modal-footer">
         <button class="btn btn-outline btn-sm" onclick="closeModal()">Hủy</button>
-        <button class="btn btn-gold btn-sm" onclick="saveEditStaff('${id}','${s.email}')">Lưu</button>
+        <button class="btn btn-gold btn-sm" onclick="saveEditStaff('${id}')">Lưu</button>
       </div>
     </div>`);
 }
 
-async function saveEditStaff(id, email) {
+async function saveEditStaff(id) {
   const fn = document.getElementById('ef').value.trim();
   const np = document.getElementById('ep').value;
   const { doc, updateDoc } = window._firebase;
-  await updateDoc(doc(window._db,'staff',id), {fullName:fn});
-  const s = staffList.find(x=>x.id===id);
-  if (s) s.fullName = fn;
+  const updates = { fullName: fn };
   if (np && np.length >= 6) {
-    // Lưu pending password - sẽ áp dụng khi user đó đăng nhập lần tới
-    await updateDoc(doc(window._db,'staff',id), {pendingPwd: np});
-    toast('✅ Mật khẩu mới sẽ tự động áp dụng khi nhân viên đó đăng nhập lại','info');
+    updates.pendingPwd = np; // NV sẽ apply khi login lần tới
+  } else if (np && np.length > 0 && np.length < 6) {
+    return toast('Mật khẩu mới tối thiểu 6 ký tự', 'err');
   }
-  closeModal(); toast('Đã cập nhật','ok'); renderStaffList();
+  await updateDoc(doc(window._db,'staff',id), updates);
+  const s = staffList.find(x=>x.id===id);
+  if (s) { s.fullName = fn; if (np && np.length >= 6) s.pendingPwd = np; }
+  closeModal();
+  toast(np && np.length >= 6 ? '✅ Đã lưu. Mật khẩu mới áp dụng khi NV login lại.' : '✅ Đã cập nhật', 'ok');
+  renderStaffList();
 }
 
 async function deactivateStaff(id, email) {
-  if (!confirm(`Vô hiệu hoá tài khoản ${displayName(email)}?\nHọ sẽ không đăng nhập được nữa.`)) return;
+  if (!confirm(`🚫 Khoá tài khoản "${displayName(email)}"?\n\nNhân viên này sẽ KHÔNG đăng nhập được nữa.`)) return;
   const { doc, updateDoc, getDoc, setDoc } = window._firebase;
-  // Update staff doc
+  // Cập nhật Firestore staff
   await updateDoc(doc(window._db,'staff',id), {active:false});
-  // Add to disabled list (single doc that all users can read)
-  const disRef = doc(window._db, 'config', 'disabled');
+  // Thêm vào disabled list (được check mỗi khi login)
+  const disRef = doc(window._db,'config','disabled');
   const snap = await getDoc(disRef);
-  const cur = snap.exists() ? (snap.data().emails || []) : [];
+  const cur = snap.exists() ? (snap.data().emails||[]) : [];
   if (!cur.includes(email)) cur.push(email);
-  await setDoc(disRef, { emails: cur });
-  staffList = staffList.map(s=>s.id===id?{...s,active:false}:s);
-  toast('Đã vô hiệu hoá tài khoản','ok'); renderStaffList();
+  await setDoc(disRef, {emails: cur});
+  staffList = staffList.map(s=>s.id===id ? {...s, active:false} : s);
+  toast(`✅ Đã khoá tài khoản ${displayName(email)}`, 'ok');
+  renderStaffList();
 }
 
 async function reactivateStaff(id, email) {
+  if (!confirm(`✅ Mở lại tài khoản "${displayName(email)}"?`)) return;
   const { doc, updateDoc, getDoc, setDoc } = window._firebase;
   await updateDoc(doc(window._db,'staff',id), {active:true});
-  const disRef = doc(window._db, 'config', 'disabled');
+  // Xoá khỏi disabled list
+  const disRef = doc(window._db,'config','disabled');
   const snap = await getDoc(disRef);
-  const cur = snap.exists() ? (snap.data().emails || []) : [];
-  const idx = cur.indexOf(email);
-  if (idx >= 0) cur.splice(idx, 1);
-  await setDoc(disRef, { emails: cur });
-  staffList = staffList.map(s=>s.id===id?{...s,active:true}:s);
-  toast('Đã kích hoạt lại tài khoản','ok'); renderStaffList();
+  if (snap.exists()) {
+    const cur = (snap.data().emails||[]).filter(e=>e!==email);
+    await setDoc(disRef, {emails: cur});
+  }
+  staffList = staffList.map(s=>s.id===id ? {...s, active:true} : s);
+  toast(`✅ Đã mở lại tài khoản ${displayName(email)}`, 'ok');
+  renderStaffList();
 }
 
 // ═══════════ MENU MANAGEMENT ═══════════
@@ -1383,10 +1462,20 @@ async function removeItem(tableId, idx) {
 
 async function saveOrder(tableId, ordData) {
   const { doc, setDoc, serverTimestamp } = window._firebase;
-  const data = { tableId, items: ordData.items||[], staffEmail: ordData.staffEmail||currentUser?.email||'',
+  // Tạo sessionId mới nếu order chưa có (bàn trống trước đó)
+  const sessionId = ordData.sessionId || `${tableId}_${Date.now()}`;
+  const data = {
+    tableId,
+    sessionId,
+    items: ordData.items||[],
+    staffEmail: ordData.staffEmail||currentUser?.email||'',
     staffName: ordData.staffName||displayName(ordData.staffEmail||currentUser?.email||''),
-    mergeLog: ordData.mergeLog||[], createdAt: ordData.createdAt||serverTimestamp(), updatedAt: serverTimestamp() };
+    mergeLog: ordData.mergeLog||[],
+    createdAt: ordData.createdAt||serverTimestamp(),
+    updatedAt: serverTimestamp()
+  };
   await setDoc(doc(window._db,'orders',tableId), data);
+  return sessionId;
 }
 
 function calcTotal(ord) {
@@ -1628,19 +1717,16 @@ async function confirmCartDraft() {
     if (existing) {
       existing.qty = (existing.qty||1) + cartItem.qty;
     } else {
-      ord.items.push({
-        ...cartItem,
-        orderBy: currentUser.email,
-        orderByName: displayName(currentUser.email),
-        addedAt: new Date().toISOString()
-      });
+      ord.items.push({ ...cartItem, orderBy:currentUser.email, orderByName:displayName(currentUser.email), addedAt:new Date().toISOString() });
     }
   }
 
-  await saveOrder(tableId, ord);
-  // Log từng món
+  // saveOrder trả về sessionId (tạo mới nếu bàn trống, giữ cũ nếu đang có order)
+  const sessionId = await saveOrder(tableId, ord);
+
+  // Log từng món với sessionId chính xác
   for (const it of cartDraft) {
-    await logHistory(tableId, `Thêm: ${it.name}${it.size?' ('+it.size+')':''}${it.toppings&&it.toppings.length?' + '+it.toppings.join(','):''} × ${it.qty}`);
+    await logHistory(tableId, `Thêm: ${it.name}${it.size?' ('+it.size+')':''}${it.toppings&&it.toppings.length?' + '+it.toppings.join(','):''} × ${it.qty}`, sessionId);
   }
   toast(`✅ Đã thêm ${cartDraft.reduce((s,it)=>s+it.qty,0)} món vào Bàn ${tableId.replace('t','')}`, 'ok');
   cartDraft = [];
@@ -1790,21 +1876,25 @@ async function doCheckout() {
   const ord = orders[tableId]; if (!ord) return;
   const total = calcTotal(ord);
   const tableNum = tableId.replace('t','');
+  const sessionId = ord.sessionId || `${tableId}_${Date.now()}`;
 
-  // CONFIRM Yes/No trước khi thanh toán
-  if (!confirm(`Xác nhận thanh toán Bàn ${tableNum}?\n\nTổng tiền: ${fmtMoney(total)}\n\nBàn sẽ được giải phóng sau khi thanh toán.`)) {
-    return;
-  }
+  if (!confirm(`Xác nhận thanh toán Bàn ${tableNum}?\n\nTổng tiền: ${fmtMoney(total)}\n\nBàn sẽ được giải phóng sau khi thanh toán.`)) return;
 
   const { collection, addDoc, doc, deleteDoc, serverTimestamp } = window._firebase;
+  // Lưu vào history với sessionId để nhóm log theo phiên
   await addDoc(collection(window._db,'history'), {
-    tableId, tableNum,
+    tableId, tableNum, sessionId,
     items: ord.items||[], total,
-    staffEmail: ord.staffEmail, mergeLog: ord.mergeLog||[],
-    closedAt: serverTimestamp(), closedBy: currentUser.email,
+    staffEmail: ord.staffEmail,
+    staffName: displayName(ord.staffEmail||''),
+    mergeLog: ord.mergeLog||[],
+    openedAt: ord.createdAt||null,
+    closedAt: serverTimestamp(),
+    closedBy: currentUser.email,
+    closedByName: displayName(currentUser.email),
     type: 'checkout'
   });
-  await logHistory(tableId, `Thanh toán ${fmtMoney(total)}`);
+  await logHistory(tableId, `Thanh toán ${fmtMoney(total)}`, sessionId);
   await deleteDoc(doc(window._db,'orders',tableId));
   closeModal(); closeOP();
   toast(`✅ Thanh toán xong! Bàn ${tableNum} đã trống.`, 'ok');
@@ -1946,18 +2036,22 @@ function escapeHTML(s) {
 }
 
 // ═══════════ HISTORY LOGGING ═══════════
-async function logHistory(tableId, action) {
+async function logHistory(tableId, action, overrideSessionId) {
   try {
     const { collection, addDoc, serverTimestamp } = window._firebase;
+    // Lấy sessionId từ order hiện tại, hoặc từ tham số override
+    const sessionId = overrideSessionId || orders[tableId]?.sessionId || `${tableId}_unknown`;
     await addDoc(collection(window._db,'actlog'), {
-      tableId, tableNum: tableId.replace('t',''),
-      action, by: currentUser?.email||'system',
+      tableId,
+      tableNum: tableId.replace('t',''),
+      sessionId,
+      action,
+      by: currentUser?.email||'system',
       byName: displayName(currentUser?.email||'system'),
       at: serverTimestamp()
     });
   } catch(e){
     console.error('logHistory error:', e);
-    // Không toast để không làm phiền user, nhưng log ra console để debug
   }
 }
 
@@ -1994,100 +2088,153 @@ async function renderHistory() {
 }
 
 async function loadHistory() {
-  const { collection, getDocs, query, orderBy, where, Timestamp } = window._firebase;
-  const tblFlt = document.getElementById('flt-table')?.value||'';
-  const typeFlt = document.getElementById('flt-type')?.value||'';
+  const { collection, getDocs, query, orderBy } = window._firebase;
+  const tblFlt  = document.getElementById('flt-table')?.value||'';
   const fromDate = document.getElementById('flt-from')?.value;
-  const toDate = document.getElementById('flt-to')?.value;
+  const toDate   = document.getElementById('flt-to')?.value;
+  const typeFlt  = document.getElementById('flt-type')?.value||'';
   const area = document.getElementById('hist-area');
   if (!area) return;
   area.innerHTML = '<div class="spinner"></div>';
 
   try {
-    // Load checkout history
-    let checkoutDocs = [], actlogDocs = [];
-    if (!typeFlt || typeFlt==='checkout') {
-      let q = query(collection(window._db,'history'), orderBy('closedAt','desc'));
-      const snap = await getDocs(q);
-      checkoutDocs = snap.docs.map(d=>({id:d.id,...d.data(), _type:'checkout'}));
-    }
-    if (!typeFlt || typeFlt==='action') {
-      let q = query(collection(window._db,'actlog'), orderBy('at','desc'));
-      const snap = await getDocs(q);
-      actlogDocs = snap.docs.map(d=>({id:d.id,...d.data(), _type:'action'}));
-    }
+    // 1. Tải tất cả checkout history
+    const hSnap = await getDocs(query(collection(window._db,'history'), orderBy('closedAt','desc')));
+    const allCheckouts = hSnap.docs.map(d=>({id:d.id,...d.data(),_type:'checkout'}));
 
-    let all = [...checkoutDocs, ...actlogDocs];
+    // 2. Tải tất cả action log
+    const aSnap = await getDocs(query(collection(window._db,'actlog'), orderBy('at','asc')));
+    const allLogs = aSnap.docs.map(d=>({id:d.id,...d.data(),_type:'action'}));
 
-    // Filter
-    if (tblFlt) all = all.filter(d=>d.tableId===tblFlt);
+    // 3. Nhóm action log theo sessionId
+    const logsBySession = {};
+    allLogs.forEach(d => {
+      const sid = d.sessionId || `${d.tableId}_nosession`;
+      if (!logsBySession[sid]) logsBySession[sid] = [];
+      logsBySession[sid].push(d);
+    });
+
+    // 4. Xây dựng danh sách sessions từ checkouts
+    // Mỗi checkout = 1 session đã đóng
+    let sessions = allCheckouts.map(ck => {
+      const sid = ck.sessionId || `${ck.tableId}_${ck.id}`;
+      const logs = (logsBySession[sid]||[]).sort((a,b)=>{
+        const ta = a.at?.toDate?a.at.toDate().getTime():0;
+        const tb = b.at?.toDate?b.at.toDate().getTime():0;
+        return ta - tb;
+      });
+      // Xoá log "Thanh toán" khỏi log list (đã hiển thị ở checkout block)
+      const filteredLogs = logs.filter(l => !l.action?.startsWith('Thanh toán'));
+      const closedAt = ck.closedAt?.toDate?ck.closedAt.toDate():new Date();
+      return { sessionId:sid, tableId:ck.tableId, tableNum:ck.tableNum||ck.tableId.replace('t',''),
+               checkout:ck, logs:filteredLogs, closedAt, closed:true };
+    });
+
+    // 5. Thêm sessions đang mở (có trong orders realtime)
+    Object.values(orders).forEach(ord => {
+      const sid = ord.sessionId || `${ord.tableId}_open`;
+      if (!sessions.find(s=>s.sessionId===sid)) {
+        const logs = (logsBySession[sid]||[]).sort((a,b)=>{
+          const ta = a.at?.toDate?a.at.toDate().getTime():0;
+          const tb = b.at?.toDate?b.at.toDate().getTime():0;
+          return ta - tb;
+        });
+        sessions.push({ sessionId:sid, tableId:ord.tableId, tableNum:ord.tableId.replace('t',''),
+                        checkout:null, logs, closedAt:new Date(), closed:false });
+      }
+    });
+
+    // 6. Áp dụng filter
+    if (tblFlt) sessions = sessions.filter(s=>s.tableId===tblFlt);
     if (fromDate) {
       const from = new Date(fromDate);
-      all = all.filter(d=>{
-        const ts = d.closedAt||d.at;
-        if (!ts) return true;
-        const dt = ts.toDate?ts.toDate():new Date(ts);
-        return dt >= from;
-      });
+      sessions = sessions.filter(s=>s.closedAt >= from);
     }
     if (toDate) {
       const to = new Date(toDate); to.setHours(23,59,59);
-      all = all.filter(d=>{
-        const ts = d.closedAt||d.at;
-        if (!ts) return true;
-        const dt = ts.toDate?ts.toDate():new Date(ts);
-        return dt <= to;
-      });
+      sessions = sessions.filter(s=>s.closedAt <= to);
     }
+    if (typeFlt==='checkout') sessions = sessions.filter(s=>s.closed);
+    if (typeFlt==='action')   sessions = sessions.filter(s=>!s.closed);
 
-    if (!all.length) { area.innerHTML='<div class="empty">Không có dữ liệu</div>'; return; }
+    // 7. Sort: mới nhất trước
+    sessions.sort((a,b)=>b.closedAt.getTime()-a.closedAt.getTime());
 
-    // Group by tableId + date
-    const grouped = {};
-    all.forEach(d=>{
-      const ts = d.closedAt||d.at;
-      const dt = ts?.toDate?ts.toDate():ts?new Date(ts):new Date();
-      const dateStr = dt.toLocaleDateString('vi-VN');
-      const key = `${d.tableId||'?'}_${dateStr}`;
-      if (!grouped[key]) grouped[key] = {tableId:d.tableId,tableNum:d.tableNum||(d.tableId||'').replace('t',''),date:dateStr,items:[]};
-      grouped[key].items.push(d);
-    });
+    if (!sessions.length) { area.innerHTML='<div class="empty">Không có dữ liệu</div>'; return; }
 
-    area.innerHTML = Object.entries(grouped).map(([key,g])=>`
-      <div class="hist-item">
-        <div class="hist-head" onclick="toggleFolder('hb-${key.replace(/[^a-z0-9]/gi,'_')}',this)">
-          <div>
-            <span style="font-weight:700">🪑 Bàn ${g.tableNum||'?'}</span>
-            <span style="color:var(--text3);font-size:12px;margin-left:8px">${g.date}</span>
-            <span class="badge" style="background:var(--accent);color:#1a1000">${g.items.length}</span>
+    // 8. Render
+    area.innerHTML = sessions.map((s, idx) => {
+      const elId = `sess_${idx}`;
+      const ck = s.checkout;
+      const merged = ck ? mergeOrderItems(ck.items||[]) : [];
+      const isOpen = !s.closed;
+
+      const headerColor = isOpen ? 'var(--red)' : 'var(--green)';
+      const badge = isOpen
+        ? `<span class="tag tag-red">🔴 Đang phục vụ</span>`
+        : `<span class="tag tag-green">✅ Đã thanh toán</span>`;
+      const timeStr = ck
+        ? fmtDate(ck.closedAt)
+        : (s.logs[0]?.at ? fmtDate(s.logs[0].at) : 'Đang mở');
+      const totalStr = ck ? `<span style="font-weight:700;color:var(--accent2)">${fmtMoney(ck.total||0)}</span>` : '';
+
+      return `
+      <div class="hist-item" style="border-left:3px solid ${headerColor};margin-bottom:12px">
+        <!-- HEADER -->
+        <div class="hist-head" onclick="toggleFolder('${elId}',this)" style="background:var(--surface2)">
+          <div style="flex:1;min-width:0">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+              <span style="font-weight:700;font-size:15px">🪑 Bàn ${s.tableNum}</span>
+              ${badge}
+              ${totalStr}
+            </div>
+            <div style="font-size:11px;color:var(--text3);margin-top:2px">${timeStr}</div>
           </div>
-          <span style="color:var(--text3);font-size:18px" id="fa-hb-${key.replace(/[^a-z0-9]/gi,'_')}">▶</span>
+          <span id="fa-${elId}" style="color:var(--text3);font-size:16px">${isOpen?'▼':'▶'}</span>
         </div>
-        <div class="hist-body" id="hb-${key.replace(/[^a-z0-9]/gi,'_')}">
-          ${g.items.map(d=>{
-            if (d._type==='checkout') {
-              const merged = mergeOrderItems(d.items||[]);
-              return `<div style="background:var(--surface);border-radius:7px;padding:10px;margin:8px 0;border:1px solid var(--border)">
-                <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--text3);margin-bottom:6px">
-                  <span>💳 Thanh toán bởi <strong>${displayName(d.closedBy||'')}</strong></span>
-                  <span>${fmtDate(d.closedAt)}</span>
-                </div>
-                ${merged.map(it=>`<div class="hist-item-row">
-                  <span>${it.name}${it.size?' ('+it.size+')':''} ×${it.qty}</span>
+
+        <!-- BODY -->
+        <div class="hist-body${isOpen?' open':''}" id="${elId}" style="padding:10px 12px">
+
+          <!-- TIMELINE LOG -->
+          ${s.logs.length ? `
+            <div style="margin-bottom:10px">
+              ${s.logs.map(l=>{
+                const by = l.byName || displayName(l.by||'') || '?';
+                const timeL = l.at?.toDate ? l.at.toDate().toLocaleTimeString('vi-VN') : '';
+                return `<div style="display:flex;gap:8px;padding:4px 0;border-bottom:1px solid var(--border);font-size:12px">
+                  <span style="color:var(--text3);white-space:nowrap;min-width:60px">${timeL}</span>
+                  <span style="flex:1">${l.action}</span>
+                  <span style="color:var(--accent);white-space:nowrap">${by}</span>
+                </div>`;
+              }).join('')}
+            </div>` : '<div style="font-size:12px;color:var(--text3);margin-bottom:8px">Không có log hành động</div>'}
+
+          <!-- CHECKOUT SUMMARY -->
+          ${ck ? `
+            <div style="background:var(--surface);border:1px solid var(--green);border-radius:8px;padding:10px;margin-top:4px">
+              <div style="font-size:12px;color:var(--green);font-weight:600;margin-bottom:8px">
+                💳 Thanh toán bởi <strong>${displayName(ck.closedBy||ck.closedByName||'')}</strong>
+                &nbsp;·&nbsp; ${fmtDate(ck.closedAt)}
+              </div>
+              ${merged.map(it=>`
+                <div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 0;border-bottom:1px solid var(--border)">
+                  <span>${it.name}${it.size?' ('+it.size+')':''}${it.toppings&&it.toppings.length?' +'+it.toppings.join(','):''} ×${it.qty}</span>
                   <span style="color:var(--accent)">${fmtMoney(it.price*it.qty)}</span>
                 </div>`).join('')}
-                <div style="display:flex;justify-content:space-between;font-weight:700;font-size:13px;margin-top:6px;padding-top:6px;border-top:1px solid var(--border)">
-                  <span>Tổng</span><span style="color:var(--accent2)">${fmtMoney(d.total)}</span>
-                </div>
-              </div>`;
-            } else {
-              const by = d.byName || displayName(d.by||'') || '?';
-              return `<div class="hist-log">• ${fmtDate(d.at)} — ${d.action} <strong style="color:var(--accent)">(bởi ${by})</strong></div>`;
-            }
-          }).join('')}
+              <div style="display:flex;justify-content:space-between;font-weight:700;font-size:14px;margin-top:8px;padding-top:6px;border-top:2px solid var(--border)">
+                <span>TỔNG</span><span style="color:var(--accent2)">${fmtMoney(ck.total||0)}</span>
+              </div>
+            </div>` : ''}
+
         </div>
-      </div>`).join('');
-  } catch(e) { area.innerHTML=`<div class="empty">Lỗi tải dữ liệu: ${e.message}</div>`; }
+      </div>`;
+    }).join('');
+
+  } catch(e) {
+    console.error('loadHistory error:', e);
+    area.innerHTML=`<div class="empty">Lỗi tải dữ liệu: ${e.message}</div>`;
+  }
 }
 
 function clearFilter() {
