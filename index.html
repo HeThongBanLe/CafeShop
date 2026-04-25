@@ -921,17 +921,19 @@ function closeSidebar() {
 }
 
 // ═══════════ HELPERS ═══════════
-// Trả về tên hiển thị: ưu tiên fullName, fallback về phần trước @
+// displayName: dùng khắp nơi để hiển thị tên đẹp (tra fullName)
 function displayName(emailOrName) {
   if (!emailOrName) return '';
-  // Nếu không có @, đây là tên thật rồi
   if (!emailOrName.includes('@')) return emailOrName;
-  // Tra trong staffList xem có fullName không
   const s = staffList.find(x => x.email === emailOrName || x.email === emailOrName.toLowerCase());
   if (s && s.fullName) return s.fullName;
   return emailOrName.split('@')[0];
 }
-// Tên người đang login (dùng nhanh không cần tra list)
+// loginName: LUÔN trả về phần trước @ - dùng riêng cho cột "Tên đăng nhập"
+function loginName(email) {
+  return (email || '').split('@')[0];
+}
+// myName: tên người đang login
 function myName() {
   return currentUserFullName || displayName(currentUser?.email || '');
 }
@@ -1150,7 +1152,7 @@ function renderStaffList() {
     <tbody>${staffList.map(s => {
       const isActive = s.active !== false;
       return `<tr style="${isActive ? '' : 'opacity:.5'}">
-        <td style="font-weight:600">${displayName(s.email)}</td>
+        <td style="font-weight:600">${loginName(s.email)}</td>
         <td>${s.fullName || '-'}</td>
         <td>${isActive
           ? '<span class="tag tag-green">✓ Hoạt động</span>'
