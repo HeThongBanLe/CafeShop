@@ -338,13 +338,23 @@ tbody tr:hover td{background:rgba(255,255,255,.02)}
     </div>
     <button class="btn btn-outline btn-sm" onclick="showLogin()">🔑 Nhân viên đăng nhập</button>
   </div>
-  <div class="guest-body">
+  <!-- Tab điều hướng guest -->
+  <div style="display:flex;gap:4px;padding:12px 16px 0;border-bottom:1px solid var(--border);background:var(--surface)">
+    <div class="tab active" id="gtab-call" onclick="switchGuestTab('call')">🛎️ Gọi nhân viên</div>
+    <div class="tab" id="gtab-menu" onclick="switchGuestTab('menu')">📋 Xem menu</div>
+  </div>
+  <!-- Tab gọi nhân viên -->
+  <div id="guest-tab-call" class="guest-body">
     <div class="guest-info" id="guest-info">Chào mừng! Chọn bàn bạn muốn ngồi hoặc gọi thanh toán.</div>
     <div id="guest-action" style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">
       <button class="btn btn-gold" id="guest-btn-order" onclick="setGuestMode('order')" style="flex:1">🍽️ Gọi món</button>
       <button class="btn btn-outline" id="guest-btn-pay" onclick="setGuestMode('pay')" style="flex:1">💳 Tính tiền</button>
     </div>
     <div class="guest-tables-grid" id="guest-tables-grid"></div>
+  </div>
+  <!-- Tab menu -->
+  <div id="guest-tab-menu" class="guest-body" style="display:none">
+    <div id="guest-menu-content"><div class="spinner"></div></div>
   </div>
 </div>
 
@@ -400,6 +410,7 @@ tbody tr:hover td{background:rgba(255,255,255,.02)}
 const ADMIN_EMAIL = 'admin@myapp.com';
 const DOMAIN = '@myapp.com';
 let currentUser = null, isAdmin = false, isGuest = false;
+let currentUserFullName = ''; // Tên thật của người đang đăng nhập
 let shopConfig = {}, groups = [], items = [], orders = {}, staffList = [];
 let currentTableId = null, selectedToppings = [], guestMode = 'order';
 let unsubOrders = null;
@@ -448,15 +459,18 @@ window.addEventListener('firebase-ready', () => {
       isGuest = false;
 
       if (!isAdmin) {
-        const allowed = await checkStaffAllowed(u.email);
-        console.log('Login check for', u.email, '→ allowed:', allowed);
-        if (!allowed) {
+        // Check staff/active trước khi cho vào
+        const staffSnap = await checkStaffActive(u.email);
+        if (!staffSnap.allowed) {
           toast('🚫 Tài khoản bị vô hiệu hoá!', 'err');
-          stopDisabledWatcher();
           await window._firebase.signOut(window._auth);
           return;
         }
+        // Lưu tên thật để dùng xuyên suốt
+        currentUserFullName = staffSnap.fullName || u.email.split('@')[0];
         startDisabledWatcher(u.email);
+      } else {
+        currentUserFullName = 'Admin';
       }
 
       await loadAllData();
@@ -471,53 +485,46 @@ window.addEventListener('firebase-ready', () => {
   });
 });
 
-// Mỗi email bị khoá là 1 doc riêng trong collection 'disabled'
-// Doc ID = email lowercase. Nếu doc tồn tại → user bị khoá.
-function emailToDocId(email) {
-  return (email || '').toLowerCase().trim();
-}
-
-async function checkStaffAllowed(email) {
-  const docId = emailToDocId(email);
-  if (!docId) return true;
-  for (let i = 0; i < 3; i++) {
-    try {
-      const { doc, getDoc } = window._firebase;
-      const snap = await getDoc(doc(window._db, 'disabled', docId));
-      const blocked = snap.exists();
-      console.log('checkStaffAllowed:', docId, '→ exists:', blocked);
-      return !blocked;
-    } catch(e) {
-      console.warn(`checkStaffAllowed try ${i+1}:`, e.code, e.message);
-      if (i < 2) await new Promise(r => setTimeout(r, 700));
+// Check staff/active trong Firestore
+// Trả về { allowed: bool, fullName: string }
+async function checkStaffActive(email) {
+  const emailLower = (email || '').toLowerCase().trim();
+  try {
+    const { collection, query, where, getDocs } = window._firebase;
+    const q = query(collection(window._db, 'staff'), where('email', '==', emailLower));
+    const snap = await getDocs(q);
+    if (snap.empty) {
+      return { allowed: true, fullName: emailLower.split('@')[0] };
     }
+    const data = snap.docs[0].data();
+    if (data.active === false) return { allowed: false, fullName: data.fullName || '' };
+    return { allowed: true, fullName: data.fullName || emailLower.split('@')[0] };
+  } catch(e) {
+    console.warn('checkStaffActive error:', e.code);
+    return { allowed: true, fullName: emailLower.split('@')[0] };
   }
-  toast('❌ Không kiểm tra được quyền (lỗi mạng/rules). Đăng nhập lại.', 'err');
-  return false;
 }
 
+// Realtime watcher: theo dõi staff doc của user đang login
+// Nếu admin đổi active=false → kick ngay
 function startDisabledWatcher(email) {
   stopDisabledWatcher();
-  const docId = emailToDocId(email);
-  if (!docId) return;
-  const { doc, onSnapshot } = window._firebase;
-  disabledWatcherUnsub = onSnapshot(
-    doc(window._db, 'disabled', docId),
-    (snap) => {
-      if (!currentUser) return;
-      if (snap.exists()) {
-        console.log('disabledWatcher: USER BLOCKED', docId);
+  const emailLower = (email || '').toLowerCase().trim();
+  const { collection, query, where, onSnapshot } = window._firebase;
+  const q = query(collection(window._db, 'staff'), where('email', '==', emailLower));
+  disabledWatcherUnsub = onSnapshot(q, (snap) => {
+    if (!currentUser || isAdmin) return;
+    snap.docs.forEach(d => {
+      if (d.data().active === false) {
         toast('🚫 Tài khoản của bạn vừa bị vô hiệu hoá!', 'err');
         stopDisabledWatcher();
         setTimeout(async () => {
           try { await window._firebase.signOut(window._auth); } catch(e){}
         }, 1200);
       }
-    },
-    (err) => console.warn('disabledWatcher error:', err.code)
-  );
+    });
+  });
 }
-
 function stopDisabledWatcher() {
   if (disabledWatcherUnsub) { disabledWatcherUnsub(); disabledWatcherUnsub = null; }
 }
@@ -587,6 +594,94 @@ function showGuest() {
   loadGuestPage();
 }
 
+function switchGuestTab(tab) {
+  document.getElementById('gtab-call').className = 'tab' + (tab==='call'?' active':'');
+  document.getElementById('gtab-menu').className = 'tab' + (tab==='menu'?' active':'');
+  document.getElementById('guest-tab-call').style.display = tab==='call' ? 'block' : 'none';
+  document.getElementById('guest-tab-menu').style.display = tab==='menu' ? 'block' : 'none';
+  if (tab==='menu') renderGuestMenu();
+}
+
+async function renderGuestMenu() {
+  const area = document.getElementById('guest-menu-content');
+  if (!area) return;
+  // Load groups + items nếu chưa có
+  if (!groups.length || !items.length) {
+    area.innerHTML = '<div class="spinner"></div>';
+    try {
+      const { collection, getDocs, query, orderBy } = window._firebase;
+      const [gSnap, iSnap] = await Promise.all([
+        getDocs(query(collection(window._db,'groups'), orderBy('order','asc'))),
+        getDocs(collection(window._db,'items'))
+      ]);
+      groups = gSnap.docs.map(d=>({id:d.id,...d.data()}));
+      items  = iSnap.docs.map(d=>({id:d.id,...d.data()}));
+    } catch(e) {
+      area.innerHTML = '<div class="empty">Không tải được menu. Vui lòng thử lại.</div>';
+      return;
+    }
+  }
+
+  const toppingGroup = groups.find(g=>(g.name||'').toLowerCase()==='topping');
+  const displayGroups = groups.filter(g=>(g.name||'').toLowerCase()!=='topping');
+
+  if (!displayGroups.length) {
+    area.innerHTML = '<div class="empty">Chưa có menu</div>';
+    return;
+  }
+
+  area.innerHTML = displayGroups.map(g => {
+    const gItems = items.filter(i=>i.groupId===g.id);
+    // Nhóm theo tên để hiện folder size
+    const byName = {};
+    gItems.forEach(it=>{ if(!byName[it.name]) byName[it.name]=[]; byName[it.name].push(it); });
+
+    return `<div style="margin-bottom:16px">
+      <div style="font-size:16px;font-weight:700;color:var(--accent);padding:10px 0 6px;border-bottom:2px solid var(--accent);margin-bottom:10px">
+        ${g.name}
+      </div>
+      ${Object.entries(byName).length ? Object.entries(byName).map(([name, sizes])=>{
+        if (sizes.length===1 && !sizes[0].size) {
+          // Món không có size
+          return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 4px;border-bottom:1px solid var(--border)">
+            <span style="font-size:14px;font-weight:500">${escapeHTML(name)}</span>
+            <span style="color:var(--accent);font-weight:700">${fmtMoney(sizes[0].price)}</span>
+          </div>`;
+        }
+        // Món có nhiều size
+        return `<div style="padding:8px 4px;border-bottom:1px solid var(--border)">
+          <div style="font-size:14px;font-weight:600;margin-bottom:6px">${escapeHTML(name)}</div>
+          <div style="display:flex;flex-wrap:wrap;gap:6px;padding-left:10px">
+            ${sizes.map(s=>`
+              <div style="display:flex;gap:8px;align-items:center;background:var(--surface2);border-radius:6px;padding:4px 10px;font-size:13px">
+                <span style="color:var(--text2)">${escapeHTML(s.size||'Thường')}</span>
+                <span style="color:var(--accent);font-weight:600">${fmtMoney(s.price)}</span>
+              </div>`).join('')}
+          </div>
+        </div>`;
+      }).join('') : '<div style="color:var(--text3);font-size:13px;padding:8px">Chưa có món</div>'}
+    </div>`;
+  }).join('');
+
+  // Hiện topping nếu có
+  if (toppingGroup) {
+    const tItems = items.filter(i=>i.groupId===toppingGroup.id);
+    if (tItems.length) {
+      area.innerHTML += `<div style="margin-bottom:16px">
+        <div style="font-size:16px;font-weight:700;color:var(--accent);padding:10px 0 6px;border-bottom:2px solid var(--accent);margin-bottom:10px">
+          🫧 Topping
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:8px">
+          ${tItems.map(t=>`
+            <div style="background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:6px 14px;font-size:13px">
+              ${escapeHTML(t.name)} <span style="color:var(--accent);font-weight:600">+${fmtMoney(t.price)}</span>
+            </div>`).join('')}
+        </div>
+      </div>`;
+    }
+  }
+}
+
 // ═══════════ GUEST PAGE ═══════════
 function setGuestMode(mode) {
   guestMode = mode;
@@ -625,17 +720,30 @@ function renderGuestTables() {
   }
 }
 
+// Rate limit: mỗi bàn chỉ gọi được 1 lần/phút
+const guestCallTimestamps = {};
+
 async function handleGuestTableClick(tableId, tableNum) {
+  // Kiểm tra rate limit
+  const now = Date.now();
+  const last = guestCallTimestamps[tableId] || 0;
+  const diff = now - last;
+  if (diff < 60000) {
+    const wait = Math.ceil((60000 - diff) / 1000);
+    toast(`⏳ Vui lòng chờ ${wait} giây trước khi gọi lại.`, 'err');
+    return;
+  }
+  guestCallTimestamps[tableId] = now;
+
   if (guestMode === 'order') {
-    // Gửi notification cho nhân viên đang đăng nhập
     try {
       const { collection, addDoc, serverTimestamp } = window._firebase;
       await addDoc(collection(window._db, 'notifications'), {
         type: 'new_guest', tableId, tableNum, at: serverTimestamp(), read: false
       });
-      // Khách chỉ thấy thông báo "đã gọi nhân viên" đơn giản
       toast(`✅ Đã gọi nhân viên! Xin vui lòng chờ trong giây lát.`, 'ok');
     } catch(e) {
+      guestCallTimestamps[tableId] = 0; // Reset nếu lỗi
       toast('Không thể gọi. Vui lòng gọi trực tiếp nhân viên.', 'err');
     }
   } else {
@@ -646,6 +754,7 @@ async function handleGuestTableClick(tableId, tableNum) {
       });
       toast(`✅ Đã yêu cầu tính tiền! Nhân viên sẽ đến ngay.`, 'ok');
     } catch(e) {
+      guestCallTimestamps[tableId] = 0;
       toast('Không thể yêu cầu. Vui lòng gọi trực tiếp nhân viên.', 'err');
     }
   }
@@ -716,7 +825,7 @@ function updateShopUI() {
 }
 
 function updateSidebar() {
-  const name = displayName(currentUser.email);
+  const name = isAdmin ? 'Admin' : myName();
   document.getElementById('sb-avatar').textContent = name[0].toUpperCase();
   document.getElementById('sb-uname').textContent = name;
   document.getElementById('sb-urole').textContent = isAdmin ? '👑 Admin' : '🧑 Nhân viên';
@@ -768,7 +877,20 @@ function closeSidebar() {
 }
 
 // ═══════════ HELPERS ═══════════
-function displayName(email) { return email ? email.split('@')[0] : ''; }
+// Trả về tên hiển thị: ưu tiên fullName, fallback về phần trước @
+function displayName(emailOrName) {
+  if (!emailOrName) return '';
+  // Nếu không có @, đây là tên thật rồi
+  if (!emailOrName.includes('@')) return emailOrName;
+  // Tra trong staffList xem có fullName không
+  const s = staffList.find(x => x.email === emailOrName || x.email === emailOrName.toLowerCase());
+  if (s && s.fullName) return s.fullName;
+  return emailOrName.split('@')[0];
+}
+// Tên người đang login (dùng nhanh không cần tra list)
+function myName() {
+  return currentUserFullName || displayName(currentUser?.email || '');
+}
 function fmtMoney(n) { return Number(n||0).toLocaleString('vi-VN') + ' ₫'; }
 function safeId(s) {
   // Convert any string (including Vietnamese) to a safe HTML id
@@ -1469,7 +1591,7 @@ function renderOP(tableId) {
         <div class="oi-meta">
           ${it.size?`📏${it.size} `:''} 
           ${(it.toppings||[]).length?'🫧'+it.toppings.join(','):''}
-          ${it.orderBy?`👤${displayName(it.orderBy)}`:''}
+          ${it.orderByName ? `👤${it.orderByName}` : it.orderBy ? `👤${displayName(it.orderBy)}` : ''}
         </div>
       </div>
       <div class="oi-right">
@@ -1549,7 +1671,7 @@ async function saveOrder(tableId, ordData) {
     sessionId,
     items: ordData.items||[],
     staffEmail: ordData.staffEmail||currentUser?.email||'',
-    staffName: ordData.staffName||displayName(ordData.staffEmail||currentUser?.email||''),
+    staffName: ordData.staffName||myName(),
     mergeLog: ordData.mergeLog||[],
     createdAt: ordData.createdAt||serverTimestamp(),
     updatedAt: serverTimestamp()
@@ -1784,7 +1906,7 @@ function draftRemove(idx) {
 async function confirmCartDraft() {
   if (!cartDraft.length) return toast('Chưa chọn món nào','err');
   const tableId = currentTableId;
-  const ord = orders[tableId] || { tableId, items:[], staffEmail:currentUser.email, staffName:displayName(currentUser.email), mergeLog:[] };
+  const ord = orders[tableId] || { tableId, items:[], staffEmail:currentUser.email, staffName:myName(), mergeLog:[] };
   ord.items = ord.items || [];
 
   // Merge cartDraft vào ord.items
@@ -1797,7 +1919,7 @@ async function confirmCartDraft() {
     if (existing) {
       existing.qty = (existing.qty||1) + cartItem.qty;
     } else {
-      ord.items.push({ ...cartItem, orderBy:currentUser.email, orderByName:displayName(currentUser.email), addedAt:new Date().toISOString() });
+      ord.items.push({ ...cartItem, orderBy:currentUser.email, orderByName:myName(), addedAt:new Date().toISOString() });
     }
   }
 
@@ -1850,7 +1972,7 @@ async function doMerge() {
   const selected = Array.from(document.querySelectorAll('[id^="ms-"].sel')).map(el=>el.id.replace('ms-',''));
   if (!selected.length) return toast('Chọn ít nhất 1 bàn','err');
   const { doc, deleteDoc } = window._firebase;
-  const master = orders[currentTableId]||{tableId:currentTableId,items:[],staffEmail:currentUser.email,staffName:displayName(currentUser.email),mergeLog:[]};
+  const master = orders[currentTableId]||{tableId:currentTableId,items:[],staffEmail:currentUser.email,staffName:myName(),mergeLog:[]};
   master.items = master.items||[]; master.mergeLog = master.mergeLog||[];
 
   for (const sid of selected) {
@@ -1860,10 +1982,10 @@ async function doMerge() {
     }
     master.mergeLog.push({action:'merge', fromTable:sid, fromTableNum:sid.replace('t',''), by:currentUser.email, at:new Date().toISOString()});
     try { await deleteDoc(doc(window._db,'orders',sid)); } catch(e){}
-    await logHistory(sid, `Gộp vào Bàn ${currentTableId.replace('t','')} bởi ${displayName(currentUser.email)}`);
+    await logHistory(sid, `Gộp vào Bàn ${currentTableId.replace('t','')} bởi ${myName()}`);
   }
   await saveOrder(currentTableId, master);
-  await logHistory(currentTableId, `Gộp bàn ${selected.map(id=>'Bàn '+id.replace('t','')).join(',')} vào bởi ${displayName(currentUser.email)}`);
+  await logHistory(currentTableId, `Gộp bàn ${selected.map(id=>'Bàn '+id.replace('t','')).join(',')} vào bởi ${myName()}`);
   toast(`✅ Đã gộp ${selected.map(id=>'Bàn '+id.replace('t','')).join(', ')} → Bàn ${currentTableId.replace('t','')}`, 'ok');
   closeModal(); renderOP(currentTableId);
 }
@@ -1871,15 +1993,15 @@ async function doMerge() {
 async function confirmMerge(fromId, toId) {
   if (!confirm(`Gộp Bàn ${fromId.replace('t','')} → Bàn ${toId.replace('t','')}?\nToàn bộ món chuyển sang, Bàn ${fromId.replace('t','')} sẽ trống.`)) return;
   const { doc, deleteDoc } = window._firebase;
-  const master = orders[toId]||{tableId:toId,items:[],staffEmail:currentUser.email,staffName:displayName(currentUser.email),mergeLog:[]};
+  const master = orders[toId]||{tableId:toId,items:[],staffEmail:currentUser.email,staffName:myName(),mergeLog:[]};
   master.items = master.items||[]; master.mergeLog = master.mergeLog||[];
   const slave = orders[fromId];
   if (slave&&slave.items) master.items.push(...slave.items.map(it=>({...it, fromTable:fromId, fromTableNum:fromId.replace('t','')})));
   master.mergeLog.push({action:'drag-merge', fromTable:fromId, fromTableNum:fromId.replace('t',''), by:currentUser.email, at:new Date().toISOString()});
   try { await deleteDoc(doc(window._db,'orders',fromId)); } catch(e){}
   await saveOrder(toId, master);
-  await logHistory(fromId, `Gộp vào Bàn ${toId.replace('t','')} (kéo thả) bởi ${displayName(currentUser.email)}`);
-  await logHistory(toId, `Nhận gộp từ Bàn ${fromId.replace('t','')} bởi ${displayName(currentUser.email)}`);
+  await logHistory(fromId, `Gộp vào Bàn ${toId.replace('t','')} (kéo thả) bởi ${myName()}`);
+  await logHistory(toId, `Nhận gộp từ Bàn ${fromId.replace('t','')} bởi ${myName()}`);
   toast(`✅ Gộp Bàn ${fromId.replace('t','')} → Bàn ${toId.replace('t','')}`, 'ok');
   if (currentTableId===toId) renderOP(toId);
 }
@@ -1966,12 +2088,12 @@ async function doCheckout() {
     tableId, tableNum, sessionId,
     items: ord.items||[], total,
     staffEmail: ord.staffEmail,
-    staffName: displayName(ord.staffEmail||''),
+    staffName: ord.staffName || displayName(ord.staffEmail||''),
     mergeLog: ord.mergeLog||[],
     openedAt: ord.createdAt||null,
     closedAt: serverTimestamp(),
     closedBy: currentUser.email,
-    closedByName: displayName(currentUser.email),
+    closedByName: myName(),
     type: 'checkout'
   });
   await logHistory(tableId, `Thanh toán ${fmtMoney(total)}`, sessionId);
@@ -2127,7 +2249,7 @@ async function logHistory(tableId, action, overrideSessionId) {
       sessionId,
       action,
       by: currentUser?.email||'system',
-      byName: displayName(currentUser?.email||'system'),
+      byName: myName(),
       at: serverTimestamp()
     });
   } catch(e){
@@ -2294,7 +2416,7 @@ async function loadHistory() {
           ${ck ? `
             <div style="background:var(--surface);border:1px solid var(--green);border-radius:8px;padding:10px;margin-top:4px">
               <div style="font-size:12px;color:var(--green);font-weight:600;margin-bottom:8px">
-                💳 Thanh toán bởi <strong>${displayName(ck.closedBy||ck.closedByName||'')}</strong>
+                💳 Thanh toán bởi <strong>${ck.closedByName || displayName(ck.closedBy||'')}</strong>
                 &nbsp;·&nbsp; ${fmtDate(ck.closedAt)}
               </div>
               ${merged.map(it=>`
