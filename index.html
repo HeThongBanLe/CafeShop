@@ -434,28 +434,89 @@ const THEMES = [
 const ACCENTS = THEMES; // backward compat
 
 // ═══════════ FIREBASE READY ═══════════
+let disabledWatcherUnsub = null;
+
 window.addEventListener('firebase-ready', () => {
   const { onAuthStateChanged } = window._firebase;
-  // Pre-load shop config for login page
   loadShopConfigPublic();
   onAuthStateChanged(window._auth, async u => {
     if (u) {
-      currentUser = u; isAdmin = u.email === ADMIN_EMAIL; isGuest = false;
-      // Check if user is banned (not in staff list)
+      currentUser = u;
+      isAdmin = u.email === ADMIN_EMAIL;
+      isGuest = false;
+
       if (!isAdmin) {
-        const ok = await checkStaffAllowed(u.email);
-        if (!ok) { toast('Tài khoản bị vô hiệu hoá', 'err'); doLogout(); return; }
-        // Check & apply pending password
-        await applyPendingPassword(u);
+        // Check ngay lập tức khi login
+        const allowed = await checkStaffAllowed(u.email);
+        if (!allowed) {
+          toast('🚫 Tài khoản bị vô hiệu hoá!', 'err');
+          stopDisabledWatcher();
+          await window._firebase.signOut(window._auth);
+          return;
+        }
+        // Realtime watcher: nếu admin khoá trong lúc đang dùng → kick ngay
+        startDisabledWatcher(u.email);
       }
+
       await loadAllData();
       showApp();
     } else {
-      currentUser = null; isAdmin = false;
-      hideAll(); showLogin();
+      currentUser = null;
+      isAdmin = false;
+      stopDisabledWatcher();
+      hideAll();
+      showLogin();
     }
   });
 });
+
+function startDisabledWatcher(email) {
+  stopDisabledWatcher();
+  const { doc, onSnapshot } = window._firebase;
+  disabledWatcherUnsub = onSnapshot(
+    doc(window._db, 'config', 'disabled'),
+    (snap) => {
+      if (!currentUser) return;
+      const emails = snap.exists() ? (snap.data().emails || []) : [];
+      if (emails.includes(email)) {
+        toast('🚫 Tài khoản của bạn đã bị vô hiệu hoá!', 'err');
+        stopDisabledWatcher();
+        setTimeout(async () => {
+          try { await window._firebase.signOut(window._auth); } catch(e){}
+        }, 1200);
+      }
+    },
+    (err) => console.warn('disabledWatcher:', err.code)
+  );
+}
+
+function stopDisabledWatcher() {
+  if (disabledWatcherUnsub) { disabledWatcherUnsub(); disabledWatcherUnsub = null; }
+}
+
+async function checkStaffAllowed(email) {
+  // Thử 3 lần (Firestore đôi khi chậm sau khi login)
+  for (let i = 0; i < 3; i++) {
+    try {
+      const { doc, getDoc } = window._firebase;
+      const snap = await getDoc(doc(window._db, 'config', 'disabled'));
+      if (!snap.exists()) return true;
+      const list = snap.data().emails || [];
+      const blocked = list.includes(email);
+      if (blocked) console.log('BLOCKED:', email);
+      return !blocked;
+    } catch(e) {
+      console.warn(`checkStaffAllowed try ${i+1}:`, e.code);
+      if (i < 2) await new Promise(r => setTimeout(r, 700));
+    }
+  }
+  toast('Không kiểm tra được quyền. Thử đăng nhập lại.', 'err');
+  return false; // Chặn nếu không đọc được
+}
+
+async function applyPendingPassword(user) {
+  // Không dùng nữa – giữ để tránh lỗi nếu có code cũ gọi
+}
 
 async function loadShopConfigPublic() {
   try {
@@ -471,41 +532,6 @@ async function loadShopConfigPublic() {
       if (shopConfig.guestEnabled) document.getElementById('guest-login-wrap').style.display = 'block';
     }
   } catch(e){}
-}
-
-async function checkStaffAllowed(email) {
-  try {
-    const { doc, getDoc } = window._firebase;
-    const snap = await getDoc(doc(window._db, 'config', 'disabled'));
-    if (!snap.exists()) return true;
-    const list = snap.data().emails || [];
-    return !list.includes(email);
-  } catch(e) {
-    console.error('checkStaffAllowed error:', e);
-    return true;
-  }
-}
-
-async function applyPendingPassword(user) {
-  // Gọi ngay sau khi login → Firebase chấp nhận updatePassword vì vừa auth xong
-  try {
-    const { collection, query, where, getDocs, doc, updateDoc, updatePassword } = window._firebase;
-    const q = query(collection(window._db,'staff'), where('email','==',user.email));
-    const snap = await getDocs(q);
-    if (snap.empty) return;
-    const sdoc = snap.docs[0];
-    const data = sdoc.data();
-    if (data.pendingPwd && data.pendingPwd.length >= 6) {
-      try {
-        await updatePassword(user, data.pendingPwd);
-        await updateDoc(doc(window._db,'staff',sdoc.id), {pendingPwd: null});
-        toast('🔑 Mật khẩu đã được đổi bởi admin. Lần sau dùng mật khẩu mới!','info');
-      } catch(e) {
-        console.warn('pendingPwd apply failed:', e.code);
-        // Nếu fail thì giữ nguyên pendingPwd, thử lại lần login sau
-      }
-    }
-  } catch(e) { console.error('applyPendingPassword:', e); }
 }
 
 // ═══════════ AUTH ═══════════
@@ -907,28 +933,34 @@ async function saveConfig() {
 }
 
 // ═══════════ STAFF ═══════════
+// Giải thích kỹ thuật:
+// - Tạo user: dùng secondary Firebase app để không logout admin
+// - Đổi mật khẩu: lưu pwd mới vào Firestore, khi admin bấm "Đổi" 
+//   dùng secondary app login bằng pwd cũ → updatePassword → pwd thật thay đổi trong Auth
+// - Vô hiệu hoá: ghi vào config/disabled → check khi login → force logout
+
 function renderStaff() {
   document.getElementById('main').innerHTML = `
     <div class="ph">
       <div><h2 class="ph-title">Quản lý nhân viên</h2></div>
       <button class="btn btn-gold btn-sm" onclick="openAddStaffModal()">+ Thêm nhân viên</button>
     </div>
-    <div class="card" style="border-color:var(--accent);background:var(--surface2)">
-      <div class="card-title"><span>🔑 Đổi mật khẩu Admin</span></div>
-      <p style="font-size:12px;color:var(--text3);margin-bottom:12px">Đổi mật khẩu tài khoản admin của bạn (${ADMIN_EMAIL})</p>
+
+    <div class="card" style="border:2px solid var(--accent)">
+      <div class="card-title">🔑 Đổi mật khẩu Admin</div>
       <div class="input-row">
-        <div class="field"><label>Mật khẩu hiện tại</label><input class="inp" type="password" id="admin-old-pwd" placeholder="Mật khẩu hiện tại"></div>
-        <div class="field"><label>Mật khẩu mới</label><input class="inp" type="password" id="admin-new-pwd" placeholder="Tối thiểu 6 ký tự"></div>
+        <div class="field"><label>Mật khẩu hiện tại</label>
+          <input class="inp" type="password" id="admin-old-pwd" placeholder="Nhập mật khẩu hiện tại">
+        </div>
+        <div class="field"><label>Mật khẩu mới</label>
+          <input class="inp" type="password" id="admin-new-pwd" placeholder="Tối thiểu 6 ký tự">
+        </div>
       </div>
       <button class="btn btn-gold btn-sm" onclick="changeAdminPassword()">🔑 Đổi mật khẩu admin</button>
     </div>
+
     <div class="card">
-      <div class="card-title"><span>👥 Danh sách nhân viên</span></div>
-      <p style="font-size:12px;color:var(--text3);margin-bottom:14px">
-        ✅ Tạo: thêm vào cả <b>Firebase Auth</b> và <b>Firestore</b><br>
-        🚫 Vô hiệu: không thể login (check mỗi lần đăng nhập)<br>
-        🔑 Đổi mật khẩu: NV login lại bằng mật khẩu cũ → tự động đổi sang mật khẩu mới
-      </p>
+      <div class="card-title">👥 Danh sách nhân viên</div>
       <div id="staff-list-area"><div class="spinner"></div></div>
     </div>`;
   renderStaffList();
@@ -937,73 +969,84 @@ function renderStaff() {
 function renderStaffList() {
   const area = document.getElementById('staff-list-area');
   if (!area) return;
-  if (!staffList.length) { area.innerHTML = '<div class="empty">Chưa có nhân viên nào</div>'; return; }
+  if (!staffList.length) {
+    area.innerHTML = '<div class="empty">Chưa có nhân viên nào</div>';
+    return;
+  }
   area.innerHTML = `<div class="tbl-wrap"><table>
-    <thead><tr><th>Tên đăng nhập</th><th>Họ tên</th><th>Trạng thái</th><th>MK mới</th><th>Thao tác</th></tr></thead>
-    <tbody>${staffList.map(s=>{
+    <thead><tr><th>Tên đăng nhập</th><th>Họ tên</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
+    <tbody>${staffList.map(s => {
       const isActive = s.active !== false;
-      const hasPending = !!s.pendingPwd;
-      return `<tr style="${isActive?'':'opacity:.5'}">
+      return `<tr style="${isActive ? '' : 'opacity:.5'}">
         <td style="font-weight:600">${displayName(s.email)}</td>
-        <td>${s.fullName||'-'}</td>
+        <td>${s.fullName || '-'}</td>
         <td>${isActive
           ? '<span class="tag tag-green">✓ Hoạt động</span>'
-          : '<span class="tag tag-red">✗ Vô hiệu</span>'}</td>
-        <td>${hasPending
-          ? '<span class="tag tag-blue" title="NV chưa login lại để áp dụng">⏳ Đang chờ</span>'
-          : '<span style="color:var(--text3);font-size:11px">-</span>'}</td>
+          : '<span class="tag tag-red">✗ Đã khoá</span>'}</td>
         <td style="display:flex;gap:4px;flex-wrap:wrap">
           <button class="btn btn-ghost btn-xs" onclick="openEditStaff('${s.id}')">✏️ Sửa</button>
           ${isActive
             ? `<button class="btn btn-red btn-xs" onclick="deactivateStaff('${s.id}','${s.email}')">🚫 Khoá</button>`
-            : `<button class="btn btn-green btn-xs" onclick="reactivateStaff('${s.id}','${s.email}')">✅ Mở</button>`}
+            : `<button class="btn btn-green btn-xs" onclick="reactivateStaff('${s.id}','${s.email}')">✅ Mở khoá</button>`}
         </td>
       </tr>`;
-    }).join('')}</tbody>
+    }).join('')}
+    </tbody>
   </table></div>`;
 }
 
+// Tạo secondary Firebase app để thao tác Auth mà không ảnh hưởng session admin
+async function getSecondaryAuth() {
+  const { initializeApp, getAuth } = window._firebase;
+  const secApp = initializeApp(window._app.options, 'sec_' + Date.now());
+  return getAuth(secApp);
+}
+
+// Đổi mật khẩu admin (tự đổi mật khẩu của mình)
 async function changeAdminPassword() {
   const oldPwd = document.getElementById('admin-old-pwd').value;
   const newPwd = document.getElementById('admin-new-pwd').value;
-  if (!oldPwd || !newPwd) return toast('Nhập đủ mật khẩu cũ và mới', 'err');
+  if (!oldPwd || !newPwd) return toast('Nhập đủ mật khẩu hiện tại và mới', 'err');
   if (newPwd.length < 6) return toast('Mật khẩu mới tối thiểu 6 ký tự', 'err');
   if (oldPwd === newPwd) return toast('Mật khẩu mới phải khác mật khẩu cũ', 'err');
   try {
     const { signInWithEmailAndPassword, updatePassword } = window._firebase;
-    // Re-authenticate với mật khẩu cũ để Firebase chắc chắn
-    await signInWithEmailAndPassword(window._auth, ADMIN_EMAIL, oldPwd);
-    await updatePassword(window._auth.currentUser, newPwd);
+    // Xác thực lại để Firebase cho phép đổi mật khẩu
+    const cred = await signInWithEmailAndPassword(window._auth, ADMIN_EMAIL, oldPwd);
+    await updatePassword(cred.user, newPwd);
+    // Cập nhật pwd lưu trong Firestore (nếu có)
     document.getElementById('admin-old-pwd').value = '';
     document.getElementById('admin-new-pwd').value = '';
-    toast('✅ Đã đổi mật khẩu admin thành công!', 'ok');
+    toast('✅ Đổi mật khẩu admin thành công! Lần sau dùng mật khẩu mới.', 'ok');
   } catch(e) {
-    if (e.code === 'auth/wrong-password' || e.code === 'auth/invalid-credential') {
-      toast('❌ Mật khẩu hiện tại sai!', 'err');
-    } else {
-      toast('❌ Lỗi: ' + (e.message||e), 'err');
-    }
+    const msg = (e.code === 'auth/wrong-password' || e.code === 'auth/invalid-credential')
+      ? '❌ Mật khẩu hiện tại không đúng!'
+      : '❌ Lỗi: ' + (e.message || e);
+    toast(msg, 'err');
   }
 }
 
 function openAddStaffModal() {
   openModal(`
     <div class="modal" onclick="event.stopPropagation()">
-      <div class="modal-title"><h3>➕ Thêm nhân viên</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
+      <div class="modal-title"><h3>➕ Thêm nhân viên</h3>
+        <button class="modal-close" onclick="closeModal()">✕</button>
+      </div>
       <div class="field"><label>Tên đăng nhập</label>
         <div style="position:relative">
           <input class="inp" id="su" placeholder="VD: nguyenvan" autocomplete="off">
           <span class="login-suffix">${DOMAIN}</span>
         </div>
       </div>
-      <div class="field"><label>Họ tên (tuỳ chọn)</label><input class="inp" id="sfn" placeholder="Nguyễn Văn A"></div>
-      <div class="field"><label>Mật khẩu</label><input class="inp" type="password" id="sp" placeholder="Tối thiểu 6 ký tự" autocomplete="new-password"></div>
-      <div style="background:var(--surface2);border-radius:8px;padding:10px;font-size:12px;color:var(--text3);margin-bottom:14px">
-        ℹ️ Tài khoản sẽ được tạo đồng thời trong <b>Firebase Auth</b> và <b>danh sách nhân viên</b>.
+      <div class="field"><label>Họ tên</label>
+        <input class="inp" id="sfn" placeholder="Nguyễn Văn A">
+      </div>
+      <div class="field"><label>Mật khẩu</label>
+        <input class="inp" type="password" id="sp" placeholder="Tối thiểu 6 ký tự" autocomplete="new-password">
       </div>
       <div class="modal-footer">
         <button class="btn btn-outline btn-sm" onclick="closeModal()">Hủy</button>
-        <button class="btn btn-gold btn-sm" onclick="addStaff()">✅ Tạo tài khoản</button>
+        <button class="btn btn-gold btn-sm" id="add-staff-btn" onclick="addStaff()">✅ Tạo tài khoản</button>
       </div>
     </div>`);
 }
@@ -1012,60 +1055,61 @@ async function addStaff() {
   let u = document.getElementById('su').value.trim();
   const fn = document.getElementById('sfn').value.trim();
   const p = document.getElementById('sp').value;
-  if (!u) return toast('Nhập tên đăng nhập','err');
-  if (p.length < 6) return toast('Mật khẩu tối thiểu 6 ký tự','err');
+  if (!u) return toast('Nhập tên đăng nhập', 'err');
+  if (p.length < 6) return toast('Mật khẩu tối thiểu 6 ký tự', 'err');
   if (!u.includes('@')) u += DOMAIN;
-  if (staffList.find(s=>s.email===u && s.active!==false)) return toast('Tài khoản đã tồn tại','err');
+  if (staffList.find(s => s.email === u)) return toast('Tài khoản đã tồn tại', 'err');
 
-  const btn = document.querySelector('.modal .btn-gold');
+  const btn = document.getElementById('add-staff-btn');
   if (btn) { btn.disabled = true; btn.textContent = '⏳ Đang tạo...'; }
 
   try {
-    // 1. Tạo trong Firebase Auth (secondary app để không đăng xuất admin)
-    const { initializeApp, getApps, getAuth, createUserWithEmailAndPassword } = window._firebase;
-    const secAppName = 'sec_' + Date.now();
-    const sec = initializeApp(window._app.options, secAppName);
-    const secAuth = getAuth(sec);
+    // Bước 1: Tạo user trong Firebase Auth (secondary app)
+    const { createUserWithEmailAndPassword } = window._firebase;
+    const secAuth = await getSecondaryAuth();
     await createUserWithEmailAndPassword(secAuth, u, p);
     await secAuth.signOut();
 
-    // 2. Ghi vào Firestore staff collection
+    // Bước 2: Lưu vào Firestore staff (bao gồm pwd để dùng khi đổi sau này)
     const { collection, addDoc } = window._firebase;
-    const ref = await addDoc(collection(window._db,'staff'), {
-      email: u, fullName: fn, active: true,
+    const ref = await addDoc(collection(window._db, 'staff'), {
+      email: u,
+      fullName: fn,
+      active: true,
+      pwd: p, // Lưu để dùng khi admin muốn đổi mật khẩu
       createdAt: new Date().toISOString(),
       createdBy: currentUser.email
     });
-    staffList.push({id:ref.id, email:u, fullName:fn, active:true});
+    staffList.push({ id: ref.id, email: u, fullName: fn, active: true, pwd: p });
     closeModal();
     toast(`✅ Đã tạo tài khoản: ${displayName(u)}`, 'ok');
     renderStaffList();
   } catch(e) {
     const msg = e.code === 'auth/email-already-in-use'
-      ? 'Email đã tồn tại trong Firebase Auth'
+      ? 'Tên đăng nhập đã tồn tại trong hệ thống!'
       : (e.message || String(e));
-    toast('❌ Lỗi: ' + msg, 'err');
+    toast('❌ ' + msg, 'err');
     if (btn) { btn.disabled = false; btn.textContent = '✅ Tạo tài khoản'; }
   }
 }
 
 function openEditStaff(id) {
-  const s = staffList.find(x=>x.id===id);
+  const s = staffList.find(x => x.id === id);
   if (!s) return;
   openModal(`
     <div class="modal" onclick="event.stopPropagation()">
-      <div class="modal-title"><h3>✏️ Sửa: ${displayName(s.email)}</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
-      <div class="field"><label>Họ tên</label><input class="inp" id="ef" value="${s.fullName||''}" placeholder="Họ tên"></div>
-      <div class="field">
-        <label>Đặt lại mật khẩu mới</label>
-        <input class="inp" type="password" id="ep" placeholder="Để trống nếu không đổi" autocomplete="new-password">
-        <div style="font-size:11px;color:var(--text3);margin-top:4px">
-          ⚠️ NV cần <b>login lại bằng mật khẩu cũ</b> → hệ thống tự đổi sang mật khẩu mới
-        </div>
+      <div class="modal-title"><h3>✏️ Sửa: ${displayName(s.email)}</h3>
+        <button class="modal-close" onclick="closeModal()">✕</button>
+      </div>
+      <div class="field"><label>Họ tên</label>
+        <input class="inp" id="ef" value="${s.fullName || ''}" placeholder="Họ tên">
+      </div>
+      <div class="field"><label>Mật khẩu mới (để trống nếu không đổi)</label>
+        <input class="inp" type="password" id="ep" placeholder="Tối thiểu 6 ký tự" autocomplete="new-password">
       </div>
       <div class="modal-footer">
         <button class="btn btn-outline btn-sm" onclick="closeModal()">Hủy</button>
-        <button class="btn btn-gold btn-sm" onclick="saveEditStaff('${id}')">Lưu</button>
+        <button class="btn btn-gold btn-sm" id="edit-staff-btn" onclick="saveEditStaff('${id}')">💾 Lưu</button>
       </div>
     </div>`);
 }
@@ -1073,50 +1117,77 @@ function openEditStaff(id) {
 async function saveEditStaff(id) {
   const fn = document.getElementById('ef').value.trim();
   const np = document.getElementById('ep').value;
-  const { doc, updateDoc } = window._firebase;
-  const updates = { fullName: fn };
+  if (np && np.length > 0 && np.length < 6) return toast('Mật khẩu tối thiểu 6 ký tự', 'err');
+
+  const s = staffList.find(x => x.id === id);
+  if (!s) return;
+
+  const btn = document.getElementById('edit-staff-btn');
+
+  // Đổi mật khẩu thật trong Firebase Auth
   if (np && np.length >= 6) {
-    updates.pendingPwd = np; // NV sẽ apply khi login lần tới
-  } else if (np && np.length > 0 && np.length < 6) {
-    return toast('Mật khẩu mới tối thiểu 6 ký tự', 'err');
+    if (!s.pwd) return toast('Không tìm thấy mật khẩu cũ. Hãy xoá và tạo lại tài khoản.', 'err');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Đang đổi mật khẩu...'; }
+    try {
+      const { signInWithEmailAndPassword, updatePassword } = window._firebase;
+      // Login bằng mật khẩu cũ đang lưu trong Firestore
+      const secAuth = await getSecondaryAuth();
+      const cred = await signInWithEmailAndPassword(secAuth, s.email, s.pwd);
+      // Đổi mật khẩu thật trong Firebase Auth
+      await updatePassword(cred.user, np);
+      await secAuth.signOut();
+      // Cập nhật pwd mới vào Firestore
+      const { doc, updateDoc } = window._firebase;
+      await updateDoc(doc(window._db, 'staff', id), { fullName: fn, pwd: np });
+      if (s) { s.fullName = fn; s.pwd = np; }
+      closeModal();
+      toast('✅ Đã đổi mật khẩu thành công! Mật khẩu cũ không còn dùng được.', 'ok');
+      renderStaffList();
+    } catch(e) {
+      const msg = (e.code === 'auth/wrong-password' || e.code === 'auth/invalid-credential')
+        ? 'Mật khẩu cũ lưu trong hệ thống không khớp Firebase Auth. Hãy xoá và tạo lại tài khoản.'
+        : (e.message || String(e));
+      toast('❌ ' + msg, 'err');
+      if (btn) { btn.disabled = false; btn.textContent = '💾 Lưu'; }
+    }
+  } else {
+    // Chỉ đổi họ tên
+    const { doc, updateDoc } = window._firebase;
+    await updateDoc(doc(window._db, 'staff', id), { fullName: fn });
+    if (s) s.fullName = fn;
+    closeModal();
+    toast('✅ Đã cập nhật họ tên', 'ok');
+    renderStaffList();
   }
-  await updateDoc(doc(window._db,'staff',id), updates);
-  const s = staffList.find(x=>x.id===id);
-  if (s) { s.fullName = fn; if (np && np.length >= 6) s.pendingPwd = np; }
-  closeModal();
-  toast(np && np.length >= 6 ? '✅ Đã lưu. Mật khẩu mới áp dụng khi NV login lại.' : '✅ Đã cập nhật', 'ok');
-  renderStaffList();
 }
 
 async function deactivateStaff(id, email) {
-  if (!confirm(`🚫 Khoá tài khoản "${displayName(email)}"?\n\nNhân viên này sẽ KHÔNG đăng nhập được nữa.`)) return;
+  if (!confirm(`🚫 Khoá tài khoản "${displayName(email)}"?\nNhân viên này sẽ KHÔNG đăng nhập được nữa.`)) return;
   const { doc, updateDoc, getDoc, setDoc } = window._firebase;
-  // Cập nhật Firestore staff
-  await updateDoc(doc(window._db,'staff',id), {active:false});
-  // Thêm vào disabled list (được check mỗi khi login)
-  const disRef = doc(window._db,'config','disabled');
+  await updateDoc(doc(window._db, 'staff', id), { active: false });
+  // Thêm vào danh sách bị khoá — được check mỗi khi login
+  const disRef = doc(window._db, 'config', 'disabled');
   const snap = await getDoc(disRef);
-  const cur = snap.exists() ? (snap.data().emails||[]) : [];
+  const cur = snap.exists() ? (snap.data().emails || []) : [];
   if (!cur.includes(email)) cur.push(email);
-  await setDoc(disRef, {emails: cur});
-  staffList = staffList.map(s=>s.id===id ? {...s, active:false} : s);
-  toast(`✅ Đã khoá tài khoản ${displayName(email)}`, 'ok');
+  await setDoc(disRef, { emails: cur });
+  staffList = staffList.map(s => s.id === id ? { ...s, active: false } : s);
+  toast(`✅ Đã khoá: ${displayName(email)}`, 'ok');
   renderStaffList();
 }
 
 async function reactivateStaff(id, email) {
-  if (!confirm(`✅ Mở lại tài khoản "${displayName(email)}"?`)) return;
+  if (!confirm(`✅ Mở khoá tài khoản "${displayName(email)}"?`)) return;
   const { doc, updateDoc, getDoc, setDoc } = window._firebase;
-  await updateDoc(doc(window._db,'staff',id), {active:true});
-  // Xoá khỏi disabled list
-  const disRef = doc(window._db,'config','disabled');
+  await updateDoc(doc(window._db, 'staff', id), { active: true });
+  const disRef = doc(window._db, 'config', 'disabled');
   const snap = await getDoc(disRef);
   if (snap.exists()) {
-    const cur = (snap.data().emails||[]).filter(e=>e!==email);
-    await setDoc(disRef, {emails: cur});
+    const cur = (snap.data().emails || []).filter(e => e !== email);
+    await setDoc(disRef, { emails: cur });
   }
-  staffList = staffList.map(s=>s.id===id ? {...s, active:true} : s);
-  toast(`✅ Đã mở lại tài khoản ${displayName(email)}`, 'ok');
+  staffList = staffList.map(s => s.id === id ? { ...s, active: true } : s);
+  toast(`✅ Đã mở khoá: ${displayName(email)}`, 'ok');
   renderStaffList();
 }
 
