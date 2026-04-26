@@ -1502,8 +1502,7 @@ async function addGroup() {
   if (groups.find(g=>g.name.toLowerCase()===name.toLowerCase())) return toast('Nhóm đã tồn tại','err');
   const { collection, addDoc } = window._firebase;
   const ref = await addDoc(collection(window._db,'groups'), {name, order:ord});
-  groups.push({id:ref.id, name, order:ord});
-  groups.sort((a,b)=>(a.order||0)-(b.order||0));
+  // Không push thủ công - realtime listener tự cập nhật
   closeModal(); toast('Đã thêm nhóm: '+name,'ok'); renderMenuTree();
 }
 
@@ -1564,7 +1563,7 @@ async function addItem() {
   if (items.find(i=>i.name===name&&i.groupId===gid&&(i.size||'')===(size||''))) return toast('Món này đã tồn tại (trùng tên + size)','err');
   const { collection, addDoc } = window._firebase;
   const ref = await addDoc(collection(window._db,'items'), {name, groupId:gid, size, price});
-  items.push({id:ref.id, name, groupId:gid, size, price});
+  // Không push thủ công - realtime listener tự cập nhật
   closeModal(); toast('Đã thêm món: '+name,'ok'); renderMenuTree();
 }
 
