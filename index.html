@@ -1672,8 +1672,12 @@ function openOP(tableId) {
   renderOP(tableId);
 }
 function closeOP() {
+  // Cảnh báo nếu có thay đổi +/- chưa lưu
+  if (currentTableId && localQtyChanges[currentTableId] && Object.keys(localQtyChanges[currentTableId]).length > 0) {
+    if (!confirm('⚠️ Bạn có thay đổi số lượng chưa lưu!\n\nThoát sẽ mất thay đổi. Tiếp tục?')) return;
+    delete localQtyChanges[currentTableId];
+  }
   document.getElementById('order-panel').classList.remove('open');
-  if (currentTableId) delete localQtyChanges[currentTableId];
   currentTableId = null;
   refreshPOSGrid();
 }
@@ -1777,13 +1781,14 @@ function changeQtyLocal(tableId, idx, delta) {
   renderOP(tableId); // Re-render local
 }
 
-// Bấm "✅ Lưu thay đổi" → ghi Firebase
+// Bấm "✅ Lưu thay đổi" → ghi Firebase + gửi Telegram
 async function saveQtyChanges(tableId) {
   const ord = orders[tableId]; if (!ord) return;
   const local = localQtyChanges[tableId] || {};
   if (!Object.keys(local).length) return;
   const merged = mergeOrderItems(ord.items);
   const logs = [];
+  const changed = []; // Để gửi Telegram
 
   merged.forEach(target => {
     const key = [target.name, target.size||'', (target.toppings||[]).slice().sort().join('|')].join('__');
@@ -1791,7 +1796,6 @@ async function saveQtyChanges(tableId) {
     const newQty = local[key];
     const oldQty = target.qty;
     if (newQty === oldQty) return;
-    // Cập nhật trong ord.items
     const same = [], others = [];
     ord.items.forEach(it => {
       const k = [it.name, it.size||'', (it.toppings||[]).slice().sort().join('|')].join('__');
@@ -1800,12 +1804,24 @@ async function saveQtyChanges(tableId) {
     if (same.length) {
       ord.items = [...others, {...same[0], qty: newQty}];
       logs.push(`Đổi SL: ${target.name}${target.size?' ('+target.size+')':''} ${oldQty} → ${newQty}`);
+      changed.push({ name: target.name, size: target.size, oldQty, newQty, price: target.price });
     }
   });
 
   delete localQtyChanges[tableId];
   await saveOrder(tableId, ord);
   for (const log of logs) await logHistory(tableId, log);
+
+  // Gửi Telegram nếu có thay đổi
+  if (changed.length) {
+    const shopName = shopConfig.name || 'CaféShop';
+    const tableNum = tableId.replace('t','');
+    const lines = changed.map(it =>
+      `• ${it.name}${it.size?' ('+it.size+')':''}: ${it.oldQty} → ${it.newQty} — ${fmtMoney(it.price*it.newQty)}`
+    ).join('\n');
+    sendTelegramNotify(`✏️ <b>${shopName} - Bàn ${tableNum}</b> cập nhật SL\n${lines}\n👤 ${myName()}`);
+  }
+
   toast('✅ Đã lưu thay đổi', 'ok');
 }
 
@@ -2100,6 +2116,11 @@ async function confirmCartDraft() {
     }
   }
 
+  // Check isNewOrder TRƯỚC khi save (bàn chưa có order = lần đầu)
+  const tableNum = tableId.replace('t','');
+  const shopName = shopConfig.name || 'CaféShop';
+  const isNewOrder = !orders[tableId] || !(orders[tableId].items||[]).length;
+
   const sessionId = await saveOrder(tableId, ord);
 
   // Log từng món
@@ -2108,10 +2129,9 @@ async function confirmCartDraft() {
   }
 
   // Gửi Telegram
-  const tableNum = tableId.replace('t','');
-  const shopName = shopConfig.name || 'CaféShop';
-  const isNewOrder = !orders[tableId] || !(orders[tableId].items||[]).length;
-  const header = isNewOrder ? `🆕 <b>${shopName} - Bàn ${tableNum}</b> có order mới` : `➕ <b>${shopName} - Bàn ${tableNum}</b> gọi thêm`;
+  const header = isNewOrder
+    ? `🆕 <b>${shopName} - Bàn ${tableNum}</b> có order mới`
+    : `➕ <b>${shopName} - Bàn ${tableNum}</b> gọi thêm`;
   const lines = cartDraft.map(it =>
     `• ${it.name}${it.size?' ('+it.size+')':''}${it.toppings&&it.toppings.length?' + '+it.toppings.join(','):''} × ${it.qty} — ${fmtMoney(it.price*it.qty)}`
   ).join('\n');
