@@ -418,6 +418,7 @@ let currentUserFullName = ''; // Tên thật của người đang đăng nhập
 let shopConfig = {}, groups = [], items = [], orders = {}, staffList = [];
 let currentTableId = null, selectedToppings = [], guestMode = 'order';
 let unsubOrders = null;
+let localQtyChanges = {}; // { tableId: { key: newQty } } - thay đổi +/- chưa lưu
 
 // Theme presets - mỗi theme đổi cả accent VÀ background, surface, border
 const THEMES = [
@@ -1672,6 +1673,7 @@ function openOP(tableId) {
 }
 function closeOP() {
   document.getElementById('order-panel').classList.remove('open');
+  if (currentTableId) delete localQtyChanges[currentTableId];
   currentTableId = null;
   refreshPOSGrid();
 }
@@ -1686,32 +1688,68 @@ function renderOP(tableId) {
   const body = document.getElementById('op-body');
   if (!ord||!ord.items||!ord.items.length) {
     body.innerHTML = '<div class="empty">Chưa có món nào<br>Nhấn "+ Thêm món"</div>';
-    document.getElementById('op-total').textContent = '0 ₫'; return;
+    document.getElementById('op-total').textContent = '0 ₫';
+    renderSaveBtn(tableId);
+    return;
   }
 
-  // Merge same item (same name+size+toppings → sum qty)
   const merged = mergeOrderItems(ord.items);
-  body.innerHTML = merged.map((it,idx)=>`
-    <div class="oi">
+  const local = localQtyChanges[tableId] || {};
+
+  body.innerHTML = merged.map((it,idx)=>{
+    const key = [it.name, it.size||'', (it.toppings||[]).slice().sort().join('|')].join('__');
+    const displayQty = key in local ? local[key] : it.qty;
+    const changed = key in local && local[key] !== it.qty;
+    return `
+    <div class="oi" style="${changed?'background:rgba(201,168,76,.08);border:1px solid var(--accent)':''}">
       <div class="oi-info">
-        <div class="oi-name">${it.name}${it.qty>1?`<span class="qty-badge">×${it.qty}</span>`:''}</div>
+        <div class="oi-name">${it.name}${displayQty>1?`<span class="qty-badge">×${displayQty}</span>`:''}</div>
         <div class="oi-meta">
-          ${it.size?`📏${it.size} `:''} 
+          ${it.size?`📏${it.size} `:''}
           ${(it.toppings||[]).length?'🫧'+it.toppings.join(','):''}
-          ${it.orderByName ? `👤${it.orderByName}` : it.orderBy ? `👤${displayName(it.orderBy)}` : ''}
+          ${it.orderByName?`👤${it.orderByName}`:it.orderBy?`👤${displayName(it.orderBy)}`:''}
         </div>
       </div>
       <div class="oi-right">
-        <div class="oi-price">${fmtMoney(it.price*it.qty)}</div>
+        <div class="oi-price">${fmtMoney(it.price*displayQty)}</div>
         <div class="qty-ctrl">
-          <button class="qty-btn" onclick="changeQty('${tableId}',${idx},-1)">−</button>
-          <span class="qty-num">${it.qty}</span>
-          <button class="qty-btn" onclick="changeQty('${tableId}',${idx},1)">+</button>
+          <button class="qty-btn" onclick="changeQtyLocal('${tableId}',${idx},-1)">−</button>
+          <span class="qty-num" ${changed?'style="color:var(--accent);font-weight:800"':''}>${displayQty}</span>
+          <button class="qty-btn" onclick="changeQtyLocal('${tableId}',${idx},1)">+</button>
         </div>
         <button class="btn btn-red btn-xs" onclick="removeItem('${tableId}',${idx})">✕</button>
       </div>
-    </div>`).join('');
-  document.getElementById('op-total').textContent = fmtMoney(calcTotal(ord));
+    </div>`;
+  }).join('');
+
+  // Tính tổng từ local
+  const totalLocal = merged.reduce((s,it)=>{
+    const key = [it.name, it.size||'', (it.toppings||[]).slice().sort().join('|')].join('__');
+    const qty = key in local ? local[key] : it.qty;
+    return s + it.price * qty;
+  }, 0);
+  document.getElementById('op-total').textContent = fmtMoney(totalLocal);
+  renderSaveBtn(tableId);
+}
+
+function renderSaveBtn(tableId) {
+  const local = localQtyChanges[tableId] || {};
+  const hasChanges = Object.keys(local).length > 0;
+  // Thêm/xoá nút lưu trong op-actions
+  const existing = document.getElementById('op-save-btn');
+  if (hasChanges && !existing) {
+    const actions = document.querySelector('.op-actions');
+    if (!actions) return;
+    const btn = document.createElement('button');
+    btn.id = 'op-save-btn';
+    btn.className = 'btn btn-gold btn-sm';
+    btn.style = 'flex:1';
+    btn.textContent = '✅ Lưu thay đổi';
+    btn.onclick = () => saveQtyChanges(tableId);
+    actions.insertBefore(btn, actions.children[1]);
+  } else if (!hasChanges && existing) {
+    existing.remove();
+  }
 }
 
 function mergeOrderItems(itemsArr) {
@@ -1725,32 +1763,55 @@ function mergeOrderItems(itemsArr) {
   return Object.values(map);
 }
 
-async function changeQty(tableId, idx, delta) {
+// Chỉ thay đổi local, CHƯA ghi Firebase
+function changeQtyLocal(tableId, idx, delta) {
   const ord = orders[tableId]; if (!ord) return;
   const merged = mergeOrderItems(ord.items);
-  const target = merged[idx];
-  if (!target) return;
-  const oldQty = target.qty;
-  const newQty = Math.max(1, oldQty + delta);
-  if (newQty === oldQty) return;
+  const target = merged[idx]; if (!target) return;
+  const key = [target.name, target.size||'', (target.toppings||[]).slice().sort().join('|')].join('__');
+  const local = localQtyChanges[tableId] || {};
+  const currentQty = key in local ? local[key] : target.qty;
+  const newQty = Math.max(1, currentQty + delta);
+  local[key] = newQty;
+  localQtyChanges[tableId] = local;
+  renderOP(tableId); // Re-render local
+}
 
-  const tkey = [target.name, target.size||'', (target.toppings||[]).slice().sort().join('|')].join('__');
+// Bấm "✅ Lưu thay đổi" → ghi Firebase
+async function saveQtyChanges(tableId) {
+  const ord = orders[tableId]; if (!ord) return;
+  const local = localQtyChanges[tableId] || {};
+  if (!Object.keys(local).length) return;
+  const merged = mergeOrderItems(ord.items);
+  const logs = [];
 
-  // Gom tất cả items trùng key thành 1 item duy nhất (dedup), rồi set qty = newQty
-  const same = [];
-  const others = [];
-  ord.items.forEach(it => {
-    const k = [it.name, it.size||'', (it.toppings||[]).slice().sort().join('|')].join('__');
-    if (k === tkey) same.push(it);
-    else others.push(it);
+  merged.forEach(target => {
+    const key = [target.name, target.size||'', (target.toppings||[]).slice().sort().join('|')].join('__');
+    if (!(key in local)) return;
+    const newQty = local[key];
+    const oldQty = target.qty;
+    if (newQty === oldQty) return;
+    // Cập nhật trong ord.items
+    const same = [], others = [];
+    ord.items.forEach(it => {
+      const k = [it.name, it.size||'', (it.toppings||[]).slice().sort().join('|')].join('__');
+      if (k===key) same.push(it); else others.push(it);
+    });
+    if (same.length) {
+      ord.items = [...others, {...same[0], qty: newQty}];
+      logs.push(`Đổi SL: ${target.name}${target.size?' ('+target.size+')':''} ${oldQty} → ${newQty}`);
+    }
   });
-  if (!same.length) return;
-  // Giữ 1 item duy nhất, set qty = newQty
-  const keep = { ...same[0], qty: newQty };
-  ord.items = [...others, keep];
 
+  delete localQtyChanges[tableId];
   await saveOrder(tableId, ord);
-  await logHistory(tableId, `Đổi SL: ${target.name}${target.size?' ('+target.size+')':''} ${oldQty} → ${newQty}`);
+  for (const log of logs) await logHistory(tableId, log);
+  toast('✅ Đã lưu thay đổi', 'ok');
+}
+
+async function changeQty(tableId, idx, delta) {
+  // Giữ lại hàm cũ nhưng redirect sang local
+  changeQtyLocal(tableId, idx, delta);
 }
 
 async function removeItem(tableId, idx) {
@@ -2039,14 +2100,25 @@ async function confirmCartDraft() {
     }
   }
 
-  // saveOrder trả về sessionId (tạo mới nếu bàn trống, giữ cũ nếu đang có order)
   const sessionId = await saveOrder(tableId, ord);
 
-  // Log từng món với sessionId chính xác
+  // Log từng món
   for (const it of cartDraft) {
     await logHistory(tableId, `Thêm: ${it.name}${it.size?' ('+it.size+')':''}${it.toppings&&it.toppings.length?' + '+it.toppings.join(','):''} × ${it.qty}`, sessionId);
   }
-  toast(`✅ Đã thêm ${cartDraft.reduce((s,it)=>s+it.qty,0)} món vào Bàn ${tableId.replace('t','')}`, 'ok');
+
+  // Gửi Telegram
+  const tableNum = tableId.replace('t','');
+  const shopName = shopConfig.name || 'CaféShop';
+  const isNewOrder = !orders[tableId] || !(orders[tableId].items||[]).length;
+  const header = isNewOrder ? `🆕 <b>${shopName} - Bàn ${tableNum}</b> có order mới` : `➕ <b>${shopName} - Bàn ${tableNum}</b> gọi thêm`;
+  const lines = cartDraft.map(it =>
+    `• ${it.name}${it.size?' ('+it.size+')':''}${it.toppings&&it.toppings.length?' + '+it.toppings.join(','):''} × ${it.qty} — ${fmtMoney(it.price*it.qty)}`
+  ).join('\n');
+  const total = cartDraft.reduce((s,it)=>s+it.price*it.qty, 0);
+  sendTelegramNotify(`${header}\n${lines}\n<b>Tổng: ${fmtMoney(total)}</b>\n👤 ${myName()}`);
+
+  toast(`✅ Đã thêm ${cartDraft.reduce((s,it)=>s+it.qty,0)} món vào Bàn ${tableNum}`, 'ok');
   cartDraft = [];
   selectedToppings = [];
   closeModal();
