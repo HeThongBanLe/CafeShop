@@ -345,12 +345,16 @@ tbody tr:hover td{background:rgba(255,255,255,.02)}
   </div>
   <!-- Tab gọi nhân viên -->
   <div id="guest-tab-call" class="guest-body">
-    <div class="guest-info" id="guest-info">Chào mừng! Chọn bàn bạn muốn ngồi hoặc gọi thanh toán.</div>
-    <div id="guest-action" style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">
-      <button class="btn btn-gold" id="guest-btn-order" onclick="setGuestMode('order')" style="flex:1">🍽️ Gọi món</button>
-      <button class="btn btn-outline" id="guest-btn-pay" onclick="setGuestMode('pay')" style="flex:1">💳 Tính tiền</button>
+    <div class="guest-info">Chọn bàn của bạn:</div>
+    <div class="guest-tables-grid" id="guest-tables-grid" style="margin-bottom:16px"></div>
+    <!-- Nút hiện sau khi chọn bàn -->
+    <div id="guest-action" style="display:none;gap:10px;flex-wrap:wrap">
+      <div style="font-size:13px;color:var(--text2);margin-bottom:8px">Bàn <strong id="guest-selected-num" style="color:var(--accent)"></strong> — Bạn cần:</div>
+      <div style="display:flex;gap:10px;width:100%">
+        <button class="btn btn-gold" onclick="doGuestCall('order')" style="flex:1">🍽️ Gọi nhân viên</button>
+        <button class="btn btn-outline" onclick="doGuestCall('pay')" style="flex:1">💳 Tính tiền</button>
+      </div>
     </div>
-    <div class="guest-tables-grid" id="guest-tables-grid"></div>
   </div>
   <!-- Tab menu -->
   <div id="guest-tab-menu" class="guest-body" style="display:none">
@@ -747,7 +751,6 @@ function renderGuestTables() {
 // Rate limit: mỗi bàn chỉ gọi được 1 lần/phút
 const guestCallTimestamps = {};
 
-// Gửi thông báo Telegram qua Vercel serverless function
 async function sendTelegramNotify(message) {
   try {
     await fetch('/api/notify', {
@@ -755,14 +758,47 @@ async function sendTelegramNotify(message) {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ message })
     });
-  } catch(e) {
-    console.warn('Telegram notify failed:', e.message);
-    // Không báo lỗi cho khách, Telegram là tính năng phụ
+  } catch(e) { console.warn('Telegram notify failed:', e.message); }
+}
+
+let selectedGuestTable = null;
+
+function renderGuestTables() {
+  const tableCount = shopConfig.tableCount || 20;
+  const grid = document.getElementById('guest-tables-grid');
+  if (!grid) return;
+  grid.innerHTML = '';
+  for (let i = 1; i <= tableCount; i++) {
+    const id = 't' + i;
+    const hasOrder = !!orders[id];
+    const isSelected = selectedGuestTable === id;
+    const div = document.createElement('div');
+    div.className = 'guest-table' + (hasOrder ? ' occupied' : '') + (isSelected ? ' selected' : '');
+    div.style.cssText = isSelected ? 'border-color:var(--accent);box-shadow:0 0 0 3px rgba(201,168,76,.3)' : '';
+    div.innerHTML = `<div class="tnum">${i}</div><div class="tstatus">${hasOrder ? 'Đang phục vụ' : 'Trống'}</div>`;
+    div.onclick = () => selectGuestTable(id, i);
+    grid.appendChild(div);
   }
 }
 
-async function handleGuestTableClick(tableId, tableNum) {
-  // Kiểm tra rate limit
+function selectGuestTable(tableId, tableNum) {
+  selectedGuestTable = tableId;
+  renderGuestTables(); // Re-render để highlight bàn được chọn
+  // Hiện nút action
+  const action = document.getElementById('guest-action');
+  const numEl = document.getElementById('guest-selected-num');
+  if (action) action.style.display = 'flex';
+  if (action) action.style.flexDirection = 'column';
+  if (numEl) numEl.textContent = tableNum;
+  // Scroll xuống nút
+  action && action.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+async function doGuestCall(mode) {
+  if (!selectedGuestTable) return toast('Chọn bàn trước', 'err');
+  const tableId = selectedGuestTable;
+  const tableNum = tableId.replace('t','');
+  // Rate limit
   const now = Date.now();
   const last = guestCallTimestamps[tableId] || 0;
   const diff = now - last;
@@ -772,35 +808,29 @@ async function handleGuestTableClick(tableId, tableNum) {
     return;
   }
   guestCallTimestamps[tableId] = now;
-
   const shopName = shopConfig.name || 'CaféShop';
-
-  if (guestMode === 'order') {
-    try {
-      const { collection, addDoc, serverTimestamp } = window._firebase;
+  try {
+    const { collection, addDoc, serverTimestamp } = window._firebase;
+    if (mode === 'order') {
       await addDoc(collection(window._db, 'notifications'), {
-        type: 'new_guest', tableId, tableNum, at: serverTimestamp(), read: false
+        type: 'new_guest', tableId, tableNum: parseInt(tableNum), at: serverTimestamp(), read: false
       });
-      // Gửi Telegram
       sendTelegramNotify(`🛎️ <b>${shopName}</b>\nCó khách mới tại <b>Bàn ${tableNum}</b>\nKhách cần gọi món`);
-      toast(`✅ Đã gọi nhân viên! Xin vui lòng chờ trong giây lát.`, 'ok');
-    } catch(e) {
-      guestCallTimestamps[tableId] = 0;
-      toast('Không thể gọi. Vui lòng gọi trực tiếp nhân viên.', 'err');
-    }
-  } else {
-    try {
-      const { collection, addDoc, serverTimestamp } = window._firebase;
+      toast(`✅ Đã gọi nhân viên! Xin vui lòng chờ.`, 'ok');
+    } else {
       await addDoc(collection(window._db, 'notifications'), {
-        type: 'checkout_request', tableId, tableNum, at: serverTimestamp(), read: false
+        type: 'checkout_request', tableId, tableNum: parseInt(tableNum), at: serverTimestamp(), read: false
       });
-      // Gửi Telegram
       sendTelegramNotify(`💳 <b>${shopName}</b>\nKhách tại <b>Bàn ${tableNum}</b> yêu cầu tính tiền`);
       toast(`✅ Đã yêu cầu tính tiền! Nhân viên sẽ đến ngay.`, 'ok');
-    } catch(e) {
-      guestCallTimestamps[tableId] = 0;
-      toast('Không thể yêu cầu. Vui lòng gọi trực tiếp nhân viên.', 'err');
     }
+    // Reset sau khi gọi
+    selectedGuestTable = null;
+    document.getElementById('guest-action').style.display = 'none';
+    renderGuestTables();
+  } catch(e) {
+    guestCallTimestamps[tableId] = 0;
+    toast('Không thể gọi. Vui lòng gọi trực tiếp nhân viên.', 'err');
   }
 }
 
