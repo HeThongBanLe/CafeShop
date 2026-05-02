@@ -1835,7 +1835,27 @@ async function removeItem(tableId, idx) {
   const merged = mergeOrderItems(ord.items);
   const target = merged[idx];
   if (!target) return;
-  if (!confirm(`Xoá món "${target.name}${target.size?' ('+target.size+')':''}" × ${target.qty}?`)) return;
+
+  const isLast = merged.length === 1; // Đây là món cuối cùng
+  const confirmMsg = isLast
+    ? `Xoá món cuối "${target.name}${target.size?' ('+target.size+')':''}"?\n\n⚠️ Bàn sẽ được dọn sạch và trả về trống.`
+    : `Xoá món "${target.name}${target.size?' ('+target.size+')':''}" × ${target.qty}?`;
+
+  if (!confirm(confirmMsg)) return;
+
+  // Nếu là món cuối → xoá luôn order (dọn bàn)
+  if (isLast) {
+    if (!confirm('Xác nhận lần 2: Dọn sạch bàn này?')) return;
+    const { doc, deleteDoc } = window._firebase;
+    await logHistory(tableId, `Xoá món cuối: ${target.name} → Dọn bàn`);
+    await deleteDoc(doc(window._db, 'orders', tableId));
+    delete localQtyChanges[tableId];
+    closeOP();
+    toast(`✅ Đã dọn sạch Bàn ${tableId.replace('t','')}`, 'ok');
+    return;
+  }
+
+  // Xoá bình thường
   const tkey = [target.name, target.size||'', (target.toppings||[]).slice().sort().join('|')].join('__');
   await logHistory(tableId, `Xoá món: ${target.name}${target.size?' ('+target.size+')':''} × ${target.qty}`);
   ord.items = ord.items.filter(it => {
