@@ -1835,7 +1835,11 @@ async function saveQtyChanges(tableId) {
       if (k===key) same.push(it); else others.push(it);
     });
     if (same.length) {
-      ord.items = [...others, {...same[0], qty: newQty}];
+      const newQtyFinal = local[key];
+      const oldQtyFinal = target.qty;
+      // Nếu tăng số lượng món đã tick → reset done vì cần làm thêm
+      const shouldResetDone = newQtyFinal > oldQtyFinal && same[0].done;
+      ord.items = [...others, {...same[0], qty: newQtyFinal, done: shouldResetDone ? false : same[0].done}];
       logs.push(`Đổi SL: ${target.name}${target.size?' ('+target.size+')':''} ${oldQty} → ${newQty}`);
       changed.push({ name: target.name, size: target.size, oldQty, newQty, price: target.price });
     }
@@ -2175,6 +2179,7 @@ async function confirmCartDraft() {
     });
     if (existing) {
       existing.qty = (existing.qty||1) + cartItem.qty;
+      existing.done = false; // Reset tick vì có món mới cần làm thêm
     } else {
       ord.items.push({ ...cartItem, orderBy:currentUser.email, orderByName:myName(), addedAt:new Date().toISOString() });
     }
