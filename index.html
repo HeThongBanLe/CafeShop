@@ -1630,12 +1630,16 @@ function renderPOS() {
 }
 
 function getTableTickStatus(ord) {
-  // Trả về: 'all' (tất cả done), 'some' (1 số done), 'none' (chưa có), null (trống)
   if (!ord || !ord.items || !ord.items.length) return null;
   const merged = mergeOrderItems(ord.items);
-  const doneCount = merged.filter(it=>it.done).length;
-  if (doneCount === 0) return 'none';
-  if (doneCount === merged.length) return 'all';
+  let totalUnits = 0, doneUnits = 0;
+  merged.forEach(it => {
+    const qty = it.qty || 1;
+    totalUnits += qty;
+    doneUnits += Math.min(it.doneCount || 0, qty);
+  });
+  if (doneUnits === 0) return 'none';
+  if (doneUnits >= totalUnits) return 'all';
   return 'some';
 }
 
@@ -1731,21 +1735,31 @@ function renderOP(tableId) {
     const key = [it.name, it.size||'', (it.toppings||[]).slice().sort().join('|')].join('__');
     const displayQty = key in local ? local[key] : it.qty;
     const changed = key in local && local[key] !== it.qty;
-    const done = !!it.done; // Trạng thái tick
+    const doneCount = it.doneCount || 0; // Số ly/phần đã xong
+    const allDone = doneCount >= displayQty;
+    const someDone = doneCount > 0 && !allDone;
+
+    // Vẽ từng chấm tròn cho mỗi ly
+    const circles = Array.from({length: displayQty}, (_,i) => {
+      const isDone = i < doneCount;
+      return `<button onclick="tickUnit('${tableId}','${key}',${i})" title="${isDone?'Bỏ tick':'Tick xong'}"
+        style="width:26px;height:26px;border-radius:50%;border:2px solid ${isDone?'var(--green)':'var(--border)'};
+        background:${isDone?'var(--green)':'transparent'};color:#fff;font-size:13px;cursor:pointer;
+        display:inline-flex;align-items:center;justify-content:center;transition:all .2s;margin:1px">
+        ${isDone?'✓':''}
+      </button>`;
+    }).join('');
+
     return `
-    <div class="oi" style="${changed?'background:rgba(201,168,76,.08);border:1px solid var(--accent)':done?'background:rgba(90,171,122,.08);border:1px solid var(--green)':''}">
-      <div style="display:flex;align-items:center;padding-right:8px">
-        <button onclick="toggleItemDone('${tableId}','${key}')" style="width:30px;height:30px;border-radius:50%;border:2px solid ${done?'var(--green)':'var(--border)'};background:${done?'var(--green)':'transparent'};color:#fff;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .2s">
-          ${done?'✓':''}
-        </button>
-      </div>
+    <div class="oi" style="${changed?'background:rgba(201,168,76,.08);border:1px solid var(--accent)':allDone?'background:rgba(90,171,122,.08);border:1px solid var(--green)':someDone?'background:rgba(201,168,76,.05);border:1px solid var(--accent)':''}">
       <div class="oi-info">
-        <div class="oi-name" style="${done?'text-decoration:line-through;opacity:.6':''}">${it.name}${displayQty>1?`<span class="qty-badge">×${displayQty}</span>`:''}</div>
+        <div class="oi-name" style="${allDone?'text-decoration:line-through;opacity:.6':''}">${it.name}${displayQty>1?`<span class="qty-badge">×${displayQty}</span>`:''}</div>
         <div class="oi-meta">
           ${it.size?`📏${it.size} `:''}
           ${(it.toppings||[]).length?'🫧'+it.toppings.join(','):''}
           ${it.orderByName?`👤${it.orderByName}`:it.orderBy?`👤${displayName(it.orderBy)}`:''}
         </div>
+        <div style="margin-top:6px;display:flex;flex-wrap:wrap;gap:2px">${circles}</div>
       </div>
       <div class="oi-right">
         <div class="oi-price">${fmtMoney(it.price*displayQty)}</div>
@@ -1837,9 +1851,9 @@ async function saveQtyChanges(tableId) {
     if (same.length) {
       const newQtyFinal = local[key];
       const oldQtyFinal = target.qty;
-      // Nếu tăng số lượng món đã tick → reset done vì cần làm thêm
-      const shouldResetDone = newQtyFinal > oldQtyFinal && same[0].done;
-      ord.items = [...others, {...same[0], qty: newQtyFinal, done: shouldResetDone ? false : same[0].done}];
+      const currentDone = same[0].doneCount || 0;
+      // Giữ nguyên doneCount, cập nhật done theo qty mới
+      ord.items = [...others, {...same[0], qty: newQtyFinal, doneCount: currentDone, done: currentDone >= newQtyFinal}];
       logs.push(`Đổi SL: ${target.name}${target.size?' ('+target.size+')':''} ${oldQty} → ${newQty}`);
       changed.push({ name: target.name, size: target.size, oldQty, newQty, price: target.price });
     }
@@ -1862,13 +1876,23 @@ async function saveQtyChanges(tableId) {
   toast('✅ Đã lưu thay đổi', 'ok');
 }
 
-async function toggleItemDone(tableId, key) {
+// Tick từng ly/phần riêng lẻ
+// unitIdx: index của ly (0,1,2...) - bấm ly đã tick → bỏ tick ly đó và các ly sau
+async function tickUnit(tableId, key, unitIdx) {
   const ord = orders[tableId]; if (!ord||!ord.items) return;
-  // Toggle done trên tất cả items có cùng key
   ord.items = ord.items.map(it => {
     const k = [it.name, it.size||'', (it.toppings||[]).slice().sort().join('|')].join('__');
-    if (k === key) return {...it, done: !it.done};
-    return it;
+    if (k !== key) return it;
+    const currentDone = it.doneCount || 0;
+    let newDone;
+    if (unitIdx < currentDone) {
+      // Bấm ly đã tick → bỏ tick từ ly đó trở đi
+      newDone = unitIdx;
+    } else {
+      // Bấm ly chưa tick → tick đến ly đó
+      newDone = unitIdx + 1;
+    }
+    return {...it, doneCount: newDone, done: newDone >= (it.qty||1)};
   });
   await saveOrder(tableId, ord);
 }
@@ -2179,7 +2203,8 @@ async function confirmCartDraft() {
     });
     if (existing) {
       existing.qty = (existing.qty||1) + cartItem.qty;
-      existing.done = false; // Reset tick vì có món mới cần làm thêm
+      existing.doneCount = existing.doneCount || 0; // Giữ số đã xong, không reset
+      existing.done = existing.doneCount >= existing.qty;
     } else {
       ord.items.push({ ...cartItem, orderBy:currentUser.email, orderByName:myName(), addedAt:new Date().toISOString() });
     }
