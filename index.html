@@ -1620,12 +1620,28 @@ async function deleteItem(id) {
 }
 
 // ═══════════ POS ═══════════
+let posFilter = 'all';
+
 function renderPOS() {
   document.getElementById('main').innerHTML = `
     <div class="ph">
-      <div><h2 class="ph-title">🧾 Bán hàng</h2><div class="ph-sub">Chọn bàn để order</div></div>
+      <div><h2 class="ph-title">🧾 Bán hàng</h2></div>
+    </div>
+    <div class="tabs" id="pos-tabs" style="margin-bottom:14px">
+      <div class="tab active" onclick="setPosFilter('all',this)">Tất cả</div>
+      <div class="tab" onclick="setPosFilter('occupied',this)">🟢 Có khách</div>
+      <div class="tab" onclick="setPosFilter('some',this)">🟡 Đang làm</div>
+      <div class="tab" onclick="setPosFilter('all-done',this)">🔵 Xong</div>
+      <div class="tab" onclick="setPosFilter('empty',this)">⬜ Trống</div>
     </div>
     <div class="pos-grid" id="pos-grid"></div>`;
+  refreshPOSGrid();
+}
+
+function setPosFilter(filter, el) {
+  posFilter = filter;
+  document.querySelectorAll('#pos-tabs .tab').forEach(t=>t.classList.remove('active'));
+  el.classList.add('active');
   refreshPOSGrid();
 }
 
@@ -1648,24 +1664,31 @@ function refreshPOSGrid() {
   if (!grid) return;
   grid.innerHTML = '';
   const tc = shopConfig.tableCount || 20;
+  let shown = 0;
   for (let i = 1; i <= tc; i++) {
     const id = 't'+i;
     const ord = orders[id];
-    const tickStatus = getTableTickStatus(ord);
-    // Màu theo trạng thái tick
-    let extraClass = '';
+    const tickStatus = getTableTickStatus(ord); // null=trống, 'none'=có khách chưa tick, 'some'=đang làm, 'all'=xong
+
+    // Lọc theo tab
+    if (posFilter === 'occupied' && (!ord || tickStatus === null)) continue;
+    if (posFilter === 'some'     && tickStatus !== 'some') continue;
+    if (posFilter === 'all-done' && tickStatus !== 'all') continue;
+    if (posFilter === 'empty'    && ord) continue;
+
+    shown++;
     let borderColor = '';
+    let extraClass = '';
     if (ord) {
       if (tickStatus === 'all')  { extraClass = ' occupied'; borderColor = 'border-color:var(--blue);background:#0a1525'; }
       else if (tickStatus === 'some') { extraClass = ' occupied'; borderColor = 'border-color:var(--accent);background:#1a1500'; }
-      else { extraClass = ' occupied'; borderColor = ''; } // green mặc định
+      else { extraClass = ' occupied'; borderColor = ''; }
     }
     const card = document.createElement('div');
     card.className = 't-card' + extraClass + (id===currentTableId?' selected':'');
     card.style.cssText = borderColor;
     card.draggable = true;
     card.dataset.id = id;
-    // Badge tick
     const tickBadge = tickStatus === 'all'
       ? `<div style="position:absolute;top:6px;right:6px;background:var(--blue);color:#fff;border-radius:10px;font-size:10px;padding:1px 6px;font-weight:700">✓ Xong</div>`
       : tickStatus === 'some'
@@ -1687,6 +1710,9 @@ function refreshPOSGrid() {
       if (from && from!==id) confirmMerge(from, id);
     });
     grid.appendChild(card);
+  }
+  if (shown === 0) {
+    grid.innerHTML = '<div class="empty" style="grid-column:1/-1">Không có bàn nào</div>';
   }
 }
 
