@@ -1622,26 +1622,55 @@ async function deleteItem(id) {
 // ═══════════ POS ═══════════
 let posFilter = 'all';
 
+function countByFilter(filter) {
+  const tc = shopConfig.tableCount || 20;
+  let count = 0;
+  for (let i = 1; i <= tc; i++) {
+    const ord = orders['t'+i];
+    const tick = getTableTickStatus(ord);
+    if (filter === 'all') count++;
+    else if (filter === 'occupied' && ord && tick !== null) count++;
+    else if (filter === 'some'     && tick === 'some') count++;
+    else if (filter === 'all-done' && tick === 'all') count++;
+    else if (filter === 'empty'    && !ord) count++;
+  }
+  return count;
+}
+
 function renderPOS() {
   document.getElementById('main').innerHTML = `
     <div class="ph">
       <div><h2 class="ph-title">🧾 Bán hàng</h2></div>
     </div>
-    <div class="tabs" id="pos-tabs" style="margin-bottom:14px">
-      <div class="tab active" onclick="setPosFilter('all',this)">Tất cả</div>
-      <div class="tab" onclick="setPosFilter('occupied',this)">🟢 Có khách</div>
-      <div class="tab" onclick="setPosFilter('some',this)">🟡 Đang làm</div>
-      <div class="tab" onclick="setPosFilter('all-done',this)">🔵 Xong</div>
-      <div class="tab" onclick="setPosFilter('empty',this)">⬜ Trống</div>
-    </div>
+    <div id="pos-tabs-wrap"></div>
     <div class="pos-grid" id="pos-grid"></div>`;
+  renderPosTabs();
   refreshPOSGrid();
+}
+
+function renderPosTabs() {
+  const wrap = document.getElementById('pos-tabs-wrap');
+  if (!wrap) return;
+  const tabs = [
+    { key:'all',      label:'Tất cả' },
+    { key:'occupied', label:'🟢 Có khách' },
+    { key:'some',     label:'🟡 Đang làm' },
+    { key:'all-done', label:'🔵 Xong' },
+    { key:'empty',    label:'⬜ Trống' },
+  ];
+  wrap.innerHTML = `<div class="tabs" id="pos-tabs" style="margin-bottom:14px">
+    ${tabs.map(t => {
+      const cnt = countByFilter(t.key);
+      return `<div class="tab ${t.key===posFilter?'active':''}" onclick="setPosFilter('${t.key}',this)">
+        ${t.label} <span style="margin-left:4px;background:${t.key===posFilter?'rgba(0,0,0,.2)':'var(--surface2)'};border-radius:10px;padding:1px 7px;font-size:11px;font-weight:700">${cnt}</span>
+      </div>`;
+    }).join('')}
+  </div>`;
 }
 
 function setPosFilter(filter, el) {
   posFilter = filter;
-  document.querySelectorAll('#pos-tabs .tab').forEach(t=>t.classList.remove('active'));
-  el.classList.add('active');
+  renderPosTabs();
   refreshPOSGrid();
 }
 
@@ -1660,6 +1689,7 @@ function getTableTickStatus(ord) {
 }
 
 function refreshPOSGrid() {
+  renderPosTabs(); // Cập nhật số đếm realtime
   const grid = document.getElementById('pos-grid');
   if (!grid) return;
   grid.innerHTML = '';
