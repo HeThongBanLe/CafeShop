@@ -2384,16 +2384,18 @@ function openCheckout() {
   // Chặn nếu có thay đổi số lượng chưa lưu
   const local = localQtyChanges[currentTableId] || {};
   if (Object.keys(local).length > 0) {
-    return toast('⚠️ Bạn có thay đổi số lượng chưa lưu!\nHãy bấm "✅ Lưu thay đổi" trước khi tính tiền.', 'err');
+    alert('⚠️ Bạn có thay đổi số lượng CHƯA LƯU!\n\nHãy bấm "✅ Lưu thay đổi" trước khi tính tiền.');
+    return;
   }
 
   const merged = mergeOrderItems(ord.items);
 
-  // Kiểm tra còn món chưa làm xong
+  // Chặn nếu còn món chưa làm xong
   const notDone = merged.filter(it => (it.doneCount||0) < (it.qty||1));
   if (notDone.length > 0) {
-    const names = notDone.map(it=>`• ${it.name}${it.size?' ('+it.size+')':''}: ${it.doneCount||0}/${it.qty||1} ly`).join('\n');
-    return toast(`⚠️ Còn món chưa làm xong:\n${names}\n\nHãy tick đủ hoặc xoá món trước khi tính tiền!`, 'err');
+    const names = notDone.map(it=>`• ${it.name}${it.size?' ('+it.size+')':''}: ${it.doneCount||0}/${it.qty||1}`).join('\n');
+    alert(`⚠️ Còn món chưa làm xong:\n${names}\n\nHãy tick đủ hoặc xoá món trước khi tính tiền!`);
+    return;
   }
 
   // Tính tổng từ merged (chính xác hơn)
