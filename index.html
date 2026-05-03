@@ -1860,12 +1860,15 @@ function renderSaveBtn(tableId) {
 }
 
 function mergeOrderItems(itemsArr) {
-  // Group by (name+size+toppings) and sum qty
   const map = {};
   itemsArr.forEach(it => {
     const key = [it.name, it.size||'', (it.toppings||[]).sort().join('|')].join('__');
-    if (!map[key]) map[key] = {...it, qty: it.qty||1};
-    else map[key].qty += (it.qty||1);
+    if (!map[key]) {
+      map[key] = {...it, qty: it.qty||1, doneCount: it.doneCount||0};
+    } else {
+      map[key].qty += (it.qty||1);
+      map[key].doneCount = (map[key].doneCount||0) + (it.doneCount||0);
+    }
   });
   return Object.values(map);
 }
@@ -2377,16 +2380,26 @@ function openCheckout() {
   if (!currentTableId) return;
   const ord = orders[currentTableId];
   if (!ord||!ord.items||!ord.items.length) return toast('Chưa có món','err');
-  const total = calcTotal(ord);
+
   const merged = mergeOrderItems(ord.items);
+
+  // Kiểm tra còn món chưa làm xong
+  const notDone = merged.filter(it => (it.doneCount||0) < (it.qty||1));
+  if (notDone.length > 0) {
+    const names = notDone.map(it=>`• ${it.name}${it.size?' ('+it.size+')':''}: ${it.doneCount||0}/${it.qty||1} ly`).join('\n');
+    return toast(`⚠️ Còn món chưa làm xong:\n${names}\n\nHãy tick đủ hoặc xoá món trước khi tính tiền!`, 'err');
+  }
+
+  // Tính tổng từ merged (chính xác hơn)
+  const total = merged.reduce((s,it) => s + it.price * (it.qty||1), 0);
 
   openModal(`
     <div class="modal" onclick="event.stopPropagation()">
       <div class="modal-title"><h3>💳 Tính tiền – Bàn ${currentTableId.replace('t','')}</h3><button class="modal-close" onclick="closeModal()">✕</button></div>
       <div style="margin-bottom:14px;max-height:220px;overflow-y:auto">
         ${merged.map(it=>`<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--border);font-size:13px">
-          <span>${it.name}${it.size?' ('+it.size+')':''}${it.toppings&&it.toppings.length?' +'+it.toppings.join(','):''} ×${it.qty}</span>
-          <span style="color:var(--accent)">${fmtMoney(it.price*it.qty)}</span>
+          <span>${it.name}${it.size?' ('+it.size+')':''}${it.toppings&&it.toppings.length?' +'+it.toppings.join(','):''} ×${it.qty||1}</span>
+          <span style="color:var(--accent)">${fmtMoney(it.price*(it.qty||1))}</span>
         </div>`).join('')}
       </div>
       <div style="display:flex;justify-content:space-between;font-size:17px;font-weight:700;color:var(--accent2);margin-bottom:16px">
