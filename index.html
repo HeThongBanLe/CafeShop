@@ -1629,6 +1629,16 @@ function renderPOS() {
   refreshPOSGrid();
 }
 
+function getTableTickStatus(ord) {
+  // Trả về: 'all' (tất cả done), 'some' (1 số done), 'none' (chưa có), null (trống)
+  if (!ord || !ord.items || !ord.items.length) return null;
+  const merged = mergeOrderItems(ord.items);
+  const doneCount = merged.filter(it=>it.done).length;
+  if (doneCount === 0) return 'none';
+  if (doneCount === merged.length) return 'all';
+  return 'some';
+}
+
 function refreshPOSGrid() {
   const grid = document.getElementById('pos-grid');
   if (!grid) return;
@@ -1637,11 +1647,28 @@ function refreshPOSGrid() {
   for (let i = 1; i <= tc; i++) {
     const id = 't'+i;
     const ord = orders[id];
+    const tickStatus = getTableTickStatus(ord);
+    // Màu theo trạng thái tick
+    let extraClass = '';
+    let borderColor = '';
+    if (ord) {
+      if (tickStatus === 'all')  { extraClass = ' occupied'; borderColor = 'border-color:var(--blue);background:#0a1525'; }
+      else if (tickStatus === 'some') { extraClass = ' occupied'; borderColor = 'border-color:var(--accent);background:#1a1500'; }
+      else { extraClass = ' occupied'; borderColor = ''; } // green mặc định
+    }
     const card = document.createElement('div');
-    card.className = 't-card' + (ord?' occupied':'') + (id===currentTableId?' selected':'');
+    card.className = 't-card' + extraClass + (id===currentTableId?' selected':'');
+    card.style.cssText = borderColor;
     card.draggable = true;
     card.dataset.id = id;
+    // Badge tick
+    const tickBadge = tickStatus === 'all'
+      ? `<div style="position:absolute;top:6px;right:6px;background:var(--blue);color:#fff;border-radius:10px;font-size:10px;padding:1px 6px;font-weight:700">✓ Xong</div>`
+      : tickStatus === 'some'
+      ? `<div style="position:absolute;top:6px;right:6px;background:var(--accent);color:#1a1000;border-radius:10px;font-size:10px;padding:1px 6px;font-weight:700">⏳</div>`
+      : '';
     card.innerHTML = `
+      ${tickBadge}
       <div class="tnum">${i}</div>
       <div class="tstatus">${ord?'Có khách':'Trống'}</div>
       ${ord?`<div class="tamount">${fmtMoney(calcTotal(ord))}</div>
@@ -1704,10 +1731,16 @@ function renderOP(tableId) {
     const key = [it.name, it.size||'', (it.toppings||[]).slice().sort().join('|')].join('__');
     const displayQty = key in local ? local[key] : it.qty;
     const changed = key in local && local[key] !== it.qty;
+    const done = !!it.done; // Trạng thái tick
     return `
-    <div class="oi" style="${changed?'background:rgba(201,168,76,.08);border:1px solid var(--accent)':''}">
+    <div class="oi" style="${changed?'background:rgba(201,168,76,.08);border:1px solid var(--accent)':done?'background:rgba(90,171,122,.08);border:1px solid var(--green)':''}">
+      <div style="display:flex;align-items:center;padding-right:8px">
+        <button onclick="toggleItemDone('${tableId}','${key}')" style="width:30px;height:30px;border-radius:50%;border:2px solid ${done?'var(--green)':'var(--border)'};background:${done?'var(--green)':'transparent'};color:#fff;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:all .2s">
+          ${done?'✓':''}
+        </button>
+      </div>
       <div class="oi-info">
-        <div class="oi-name">${it.name}${displayQty>1?`<span class="qty-badge">×${displayQty}</span>`:''}</div>
+        <div class="oi-name" style="${done?'text-decoration:line-through;opacity:.6':''}">${it.name}${displayQty>1?`<span class="qty-badge">×${displayQty}</span>`:''}</div>
         <div class="oi-meta">
           ${it.size?`📏${it.size} `:''}
           ${(it.toppings||[]).length?'🫧'+it.toppings.join(','):''}
@@ -1823,6 +1856,17 @@ async function saveQtyChanges(tableId) {
   }
 
   toast('✅ Đã lưu thay đổi', 'ok');
+}
+
+async function toggleItemDone(tableId, key) {
+  const ord = orders[tableId]; if (!ord||!ord.items) return;
+  // Toggle done trên tất cả items có cùng key
+  ord.items = ord.items.map(it => {
+    const k = [it.name, it.size||'', (it.toppings||[]).slice().sort().join('|')].join('__');
+    if (k === key) return {...it, done: !it.done};
+    return it;
+  });
+  await saveOrder(tableId, ord);
 }
 
 async function changeQty(tableId, idx, delta) {
