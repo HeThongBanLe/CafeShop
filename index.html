@@ -2381,6 +2381,12 @@ function openCheckout() {
   const ord = orders[currentTableId];
   if (!ord||!ord.items||!ord.items.length) return toast('Chưa có món','err');
 
+  // Chặn nếu có thay đổi số lượng chưa lưu
+  const local = localQtyChanges[currentTableId] || {};
+  if (Object.keys(local).length > 0) {
+    return toast('⚠️ Bạn có thay đổi số lượng chưa lưu!\nHãy bấm "✅ Lưu thay đổi" trước khi tính tiền.', 'err');
+  }
+
   const merged = mergeOrderItems(ord.items);
 
   // Kiểm tra còn món chưa làm xong
