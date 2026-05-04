@@ -58,7 +58,7 @@ h1,h2,h3{font-family:'Playfair Display',serif}
 ::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
 
 /* TOAST */
-#toast-wrap{position:fixed;bottom:16px;right:16px;z-index:9999;display:flex;flex-direction:column;gap:6px;pointer-events:none}
+#toast-wrap{position:fixed;top:16px;right:16px;z-index:9999;display:flex;flex-direction:column;gap:6px;pointer-events:none}
 .toast{background:var(--surface2);border:1px solid var(--border);border-left:4px solid var(--accent);padding:10px 14px;border-radius:8px;font-size:13px;max-width:300px;animation:tslide .3s ease;pointer-events:auto}
 .toast.err{border-left-color:var(--red)}.toast.ok{border-left-color:var(--green)}.toast.info{border-left-color:var(--blue)}
 @keyframes tslide{from{transform:translateX(110%);opacity:0}to{transform:translateX(0);opacity:1}}
@@ -2463,14 +2463,16 @@ function showQR(total) {
 async function doCheckout() {
   const tableId = currentTableId;
   const ord = orders[tableId]; if (!ord) return;
-  const total = calcTotal(ord);
+  const merged = mergeOrderItems(ord.items);
+  const total = merged.reduce((s,it) => s + it.price * (it.qty||1), 0);
   const tableNum = tableId.replace('t','');
   const sessionId = ord.sessionId || `${tableId}_${Date.now()}`;
 
-  if (!confirm(`Xác nhận thanh toán Bàn ${tableNum}?\n\nTổng tiền: ${fmtMoney(total)}\n\nBàn sẽ được giải phóng sau khi thanh toán.`)) return;
+  // Confirm thanh toán
+  if (!confirm(`Xác nhận thanh toán Bàn ${tableNum}?\n\nTổng tiền: ${fmtMoney(total)}`)) return;
 
+  // Lưu Firebase
   const { collection, addDoc, doc, deleteDoc, serverTimestamp } = window._firebase;
-  // Lưu vào history với sessionId để nhóm log theo phiên
   await addDoc(collection(window._db,'history'), {
     tableId, tableNum, sessionId,
     items: ord.items||[], total,
@@ -2484,140 +2486,101 @@ async function doCheckout() {
     type: 'checkout'
   });
   await logHistory(tableId, `Thanh toán ${fmtMoney(total)}`, sessionId);
+
+  // Lưu ord để in (vì sau deleteDoc thì orders[tableId] mất)
+  const ordSnapshot = JSON.parse(JSON.stringify(ord));
+  const mergedSnapshot = mergeOrderItems(ordSnapshot.items||[]);
   await deleteDoc(doc(window._db,'orders',tableId));
   closeModal(); closeOP();
   toast(`✅ Thanh toán xong! Bàn ${tableNum} đã trống.`, 'ok');
+
+  // Lưu vào biến global để nút In dùng
+  window._pendingPrint = { tableNum, ord: ordSnapshot, merged: mergedSnapshot, total };
+
+  // Hỏi in bằng modal
+  openModal(`
+    <div class="modal" onclick="event.stopPropagation()" style="max-width:320px;text-align:center">
+      <div style="font-size:40px;margin-bottom:12px">🖨️</div>
+      <div style="font-size:16px;font-weight:700;color:var(--cream);margin-bottom:8px">In hoá đơn Bàn ${tableNum}?</div>
+      <div style="font-size:13px;color:var(--text2);margin-bottom:20px">${fmtMoney(total)}</div>
+      <div style="display:flex;gap:10px">
+        <button class="btn btn-outline" style="flex:1" onclick="closeModal()">Không</button>
+        <button class="btn btn-gold" style="flex:1" onclick="closeModal();doPendingPrint()">🖨️ In</button>
+      </div>
+    </div>`);
 }
 
-// ═══════════ PRINT (chuẩn cho cả mobile và desktop) ═══════════
+function doPendingPrint() {
+  const p = window._pendingPrint;
+  if (!p) return toast('Không có dữ liệu in', 'err');
+  printReceipt(p.tableNum, p.ord, p.merged, p.total);
+  window._pendingPrint = null;
+}
+
+// ═══════════ PRINT ═══════════
 function doPrint() {
-  const tableId = currentTableId;
-  const ord = orders[tableId]; if (!ord) return;
-  const total = calcTotal(ord);
+  // Gọi từ nút In HĐ trong modal tính tiền (khi chưa thanh toán)
+  if (!currentTableId) return;
+  const ord = orders[currentTableId]; if (!ord) return;
   const merged = mergeOrderItems(ord.items);
+  const total = merged.reduce((s,it)=>s+it.price*(it.qty||1),0);
+  printReceipt(currentTableId.replace('t',''), ord, merged, total);
+}
+
+function printReceipt(tableNum, ord, mergedIn, total) {
+  const merged = mergedIn || mergeOrderItems(ord.items||[]);
+  const calcedTotal = total != null ? total : merged.reduce((s,it)=>s+it.price*(it.qty||1),0);
   const shop = shopConfig;
   const now = new Date().toLocaleString('vi-VN');
+  const mergeNote = ord.mergeLog&&ord.mergeLog.length
+    ? `(Da gop: ${[...new Set(ord.mergeLog.map(l=>l.fromTableNum).filter(Boolean))].map(n=>'Ban '+n).join(', ')})`
+    : '';
 
-  // Receipt nội dung (phần in ra giấy)
-  const receiptBody = `
-<div class="receipt">
-  <div class="c b lg">${escapeHTML(shop.name||'CafeShop')}</div>
-  ${shop.address?`<div class="c note">${escapeHTML(shop.address)}</div>`:''}
-  ${shop.phone?`<div class="c note">DT: ${escapeHTML(shop.phone)}</div>`:''}
-  <hr>
-  <div class="c b big">HOA DON THANH TOAN</div>
-  <div class="c">Ban: ${tableId.replace('t','')} | ${now}</div>
-  <div class="c">NV: ${escapeHTML(displayName(ord.staffEmail||''))}</div>
-  ${ord.mergeLog&&ord.mergeLog.length?`<div class="c note">(Da gop: ${[...new Set(ord.mergeLog.map(l=>l.fromTableNum).filter(Boolean))].map(n=>'Ban '+n).join(', ')})</div>`:''}
-  <hr>
-  ${merged.map(it=>`<div class="row">
-    <span class="l">${escapeHTML(it.name)}${it.size?' ('+escapeHTML(it.size)+')':''}${it.toppings&&it.toppings.length?' +'+escapeHTML(it.toppings.join(',')):''} x${it.qty}</span>
-    <span class="r">${(it.price*it.qty).toLocaleString('vi-VN')}</span>
-  </div>`).join('')}
-  <hr>
-  <div class="row b big"><span class="l">TONG CONG</span><span class="r">${total.toLocaleString('vi-VN')} d</span></div>
-  <hr>
-  <div class="foot">${escapeHTML(shop.footer||'Cam on quy khach!')}<br>Hen gap lai!</div>
-</div>`;
+  const css = `@page{size:80mm auto;margin:0}*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:80mm;background:#fff;color:#000;font-family:'Courier New',monospace;font-size:12px;line-height:1.35}
+body{padding:3mm 2mm}.c{text-align:center}.b{font-weight:bold}.big{font-size:14px}.lg{font-size:16px}
+hr{border:none;border-top:1px dashed #000;margin:4px 0}
+.row{display:flex;justify-content:space-between;gap:6px;margin:2px 0}
+.row .l{flex:1;word-break:break-word}.row .r{white-space:nowrap}
+.foot{text-align:center;margin-top:6px;font-style:italic}.note{font-size:10px}`;
 
-  const receiptHTML = `<!DOCTYPE html>
-<html lang="vi">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Hoá đơn Bàn ${tableId.replace('t','')}</title>
-<style>
-/* Kích thước chuẩn cho máy in nhiệt 80mm, fallback 58mm cũng ok */
-@page { size: 80mm auto; margin: 0 !important; padding: 0 !important; }
+  const body = `
+<div class="c b lg">${escapeHTML(shop.name||'CafeShop')}</div>
+${shop.address?`<div class="c note">${escapeHTML(shop.address)}</div>`:''}
+${shop.phone?`<div class="c note">DT: ${escapeHTML(shop.phone)}</div>`:''}
+<hr>
+<div class="c b big">HOA DON THANH TOAN</div>
+<div class="c">Ban: ${tableNum} | ${now}</div>
+<div class="c">NV: ${escapeHTML(ord.staffName||displayName(ord.staffEmail||''))}</div>
+${mergeNote?`<div class="c note">${mergeNote}</div>`:''}
+<hr>
+${merged.map(it=>`<div class="row">
+  <span class="l">${escapeHTML(it.name)}${it.size?' ('+escapeHTML(it.size)+')':''}${it.toppings&&it.toppings.length?' +'+escapeHTML(it.toppings.join(',')):''} x${it.qty||1}</span>
+  <span class="r">${((it.price||0)*(it.qty||1)).toLocaleString('vi-VN')}</span>
+</div>`).join('')}
+<hr>
+<div class="row b big"><span class="l">TONG CONG</span><span class="r">${calcedTotal.toLocaleString('vi-VN')} d</span></div>
+<hr>
+<div class="foot">${escapeHTML(shop.footer||'Cam on quy khach!')}<br>Hen gap lai!</div>`;
 
-* { margin: 0; padding: 0; box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-body {
-  background: #ccc;
-  font-family: 'Courier New', 'Consolas', monospace;
-  min-height: 100vh;
-}
-.receipt {
-  background: #fff;
-  color: #000;
-  width: 80mm;
-  margin: 10px auto;
-  padding: 3mm 2mm;
-  font-size: 12px;
-  line-height: 1.35;
-  box-shadow: 0 4px 16px rgba(0,0,0,.25);
-}
-.c { text-align: center; }
-.b { font-weight: bold; }
-.big { font-size: 14px; }
-.lg { font-size: 16px; }
-hr { border: none; border-top: 1px dashed #000; margin: 4px 0; }
-.row { display: flex; justify-content: space-between; gap: 6px; margin: 2px 0; }
-.row .l { flex: 1; word-break: break-word; }
-.row .r { white-space: nowrap; }
-.foot { text-align: center; margin-top: 6px; font-style: italic; }
-.note { font-size: 10px; }
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>${css}</style></head><body>${body}</body></html>`;
 
-.print-bar {
-  position: sticky; top: 0; background: #2a2a2a;
-  padding: 10px; display: flex; gap: 8px; justify-content: center;
-  box-shadow: 0 2px 8px rgba(0,0,0,.3); z-index: 100;
-}
-.print-bar button {
-  padding: 12px 22px; font-size: 15px; font-weight: 700;
-  border: none; border-radius: 10px; cursor: pointer;
-  font-family: -apple-system, system-ui, sans-serif;
-}
-.pb-print { background: #22c55e; color: #fff; }
-.pb-close { background: #888; color: #fff; }
-
-@media print {
-  html, body {
-    width: 80mm !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    background: #fff !important;
-  }
-  body { background: #fff !important; }
-  .print-bar { display: none !important; }
-  .receipt {
-    box-shadow: none !important;
-    margin: 0 !important;
-    padding: 2mm 2mm !important;
-    width: 80mm !important;
-    max-width: 80mm !important;
-    page-break-inside: avoid;
-  }
-  @page { size: 80mm auto; margin: 0 !important; }
-}
-</style>
-</head>
-<body>
-<div class="print-bar">
-  <button class="pb-print" onclick="window.print()">🖨️ IN HOÁ ĐƠN</button>
-  <button class="pb-close" onclick="window.close()">Đóng</button>
-</div>
-${receiptBody}
-<script>
-// Tự động trigger print sau khi load (chỉ desktop mới hiệu quả, mobile user phải bấm tay)
-window.addEventListener('load', function(){
-  setTimeout(function(){
-    try { window.print(); } catch(e){}
+  // Dùng iframe ẩn — không mở tab mới, không bị chặn popup
+  let frame = document.getElementById('print-frame');
+  if (frame) frame.remove();
+  frame = document.createElement('iframe');
+  frame.id = 'print-frame';
+  frame.style.cssText = 'position:fixed;right:-9999px;bottom:-9999px;width:80mm;height:600px;border:0;visibility:hidden';
+  document.body.appendChild(frame);
+  const fdoc = frame.contentDocument || frame.contentWindow.document;
+  fdoc.open(); fdoc.write(html); fdoc.close();
+  setTimeout(() => {
+    try {
+      frame.contentWindow.focus();
+      frame.contentWindow.print();
+    } catch(e) { console.error('print error:', e); }
+    setTimeout(() => { try { frame.remove(); } catch(e){} }, 2000);
   }, 300);
-});
-</`+`script>
-</body>
-</html>`;
-
-  // MỞ TAB MỚI (hoạt động trên cả iOS Safari, Android Chrome, Desktop)
-  const w = window.open('', '_blank');
-  if (!w) {
-    toast('❌ Trình duyệt chặn popup! Vào Cài đặt → cho phép popup cho trang này', 'err');
-    return;
-  }
-  w.document.open();
-  w.document.write(receiptHTML);
-  w.document.close();
-  toast('🖨️ Mở tab in hoá đơn...', 'info');
 }
 
 function escapeHTML(s) {
