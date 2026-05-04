@@ -13,13 +13,13 @@ import { getFirestore, collection, doc, setDoc, getDoc, getDocs, addDoc, updateD
   from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyCvo70FjlePnBd7I6O1xFY5v_XK62oBdWE",
-  authDomain: "cafeshop-be3a1.firebaseapp.com",
-  projectId: "cafeshop-be3a1",
-  storageBucket: "cafeshop-be3a1.firebasestorage.app",
-  messagingSenderId: "1048804844121",
-  appId: "1:1048804844121:web:e5e9231284d5067a104748",
-  measurementId: "G-D0CQN675BS"
+  apiKey: "AIzaSyCE5RjuBkYNtc9D0Tj5NjDVR8fedTBMBX8",
+  authDomain: "cafeshop-4ff76.firebaseapp.com",
+  projectId: "cafeshop-4ff76",
+  storageBucket: "cafeshop-4ff76.firebasestorage.app",
+  messagingSenderId: "652467220748",
+  appId: "1:652467220748:web:533a87b1a2e8b80b85d929",
+  measurementId: "G-VTC35S2KBD"
 };
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
@@ -2820,28 +2820,5 @@ async function confirmClearNotifications() {
 }
 </script>
 
-<!--
-=== FIREBASE RULES ===
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    function isAdmin() { return request.auth != null && request.auth.token.email == 'admin@myapp.com'; }
-    function isStaff() { return request.auth != null; }
-    
-    match /config/{doc} {
-      allow read: if true;
-      allow write: if isAdmin();
-    }
-    match /groups/{doc} { allow read: if isStaff(); allow write: if isAdmin(); }
-    match /items/{doc}  { allow read: if isStaff(); allow write: if isAdmin(); }
-    match /staff/{doc}  { allow read: if isStaff(); allow write: if isAdmin(); }
-    match /orders/{doc} { allow read, write: if isStaff(); }
-    match /history/{doc}{ allow write: if isStaff(); allow read: if isAdmin(); allow delete: if isAdmin(); }
-    match /actlog/{doc} { allow write: if isStaff(); allow read: if isAdmin(); allow delete: if isAdmin(); }
-    match /notifications/{doc} { allow read, write: if true; }
-    match /{document=**} { allow read, write: if false; }
-  }
-}
--->
 </body>
 </html>
