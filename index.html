@@ -2566,21 +2566,43 @@ ${merged.map(it=>`<div class="row">
   const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>${css}</style></head><body>${body}</body></html>`;
 
   // Dùng iframe ẩn — không mở tab mới, không bị chặn popup
+  // Chống double-click: nếu đang in thì bỏ qua
+  if (window._isPrinting) return;
+  window._isPrinting = true;
+
   let frame = document.getElementById('print-frame');
   if (frame) frame.remove();
   frame = document.createElement('iframe');
   frame.id = 'print-frame';
   frame.style.cssText = 'position:fixed;right:-9999px;bottom:-9999px;width:80mm;height:600px;border:0;visibility:hidden';
-  document.body.appendChild(frame);
-  const fdoc = frame.contentDocument || frame.contentWindow.document;
-  fdoc.open(); fdoc.write(html); fdoc.close();
-  setTimeout(() => {
+
+  // Chỉ in MỘT lần (dù onload + fallback đều fire)
+  let printed = false;
+  const triggerPrint = () => {
+    if (printed) return;
+    printed = true;
     try {
       frame.contentWindow.focus();
       frame.contentWindow.print();
-    } catch(e) { console.error('print error:', e); }
-    setTimeout(() => { try { frame.remove(); } catch(e){} }, 2000);
-  }, 300);
+    } catch(e) {
+      console.error('print error:', e);
+      toast('Lỗi in: ' + (e.message||e), 'err');
+    }
+    // Dọn dẹp sau khi user đóng dialog in
+    setTimeout(() => {
+      try { frame.remove(); } catch(e){}
+      window._isPrinting = false;
+    }, 2000);
+  };
+
+  // Đợi iframe LOAD XONG thật sự rồi mới in (thay vì timer cố định 300ms)
+  frame.onload = triggerPrint;
+  // Fallback an toàn: nếu sau 1.5s onload chưa fire vì lý do gì đó
+  setTimeout(triggerPrint, 1500);
+
+  document.body.appendChild(frame);
+  // Dùng srcdoc thay cho document.write — onload sẽ fire ổn định hơn
+  frame.srcdoc = html;
 }
 
 function escapeHTML(s) {
