@@ -3123,24 +3123,26 @@ function renderDataAnalysis() {
     <!-- TREND TẤT CẢ MÓN -->
     <div class="card">
       <div class="card-title">
-        <div class="card-title-left">📉 Trend bán theo ngày — tất cả món</div>
-        <span class="tag tag-gold" style="font-size:10px">Bấm tên món bên trên để ẩn/hiện</span>
+        <div class="card-title-left">📉 Trend bán theo ngày — Top 10 món</div>
+        <span class="tag tag-gold" style="font-size:10px">Bấm tên món để ẩn/hiện</span>
       </div>
       <div style="position:relative;height:380px">
         <canvas id="chart-trend"></canvas>
       </div>
+      <div id="chart-trend-note" style="font-size:11px;color:var(--text3);margin-top:8px;font-style:italic;text-align:center"></div>
     </div>
 
     <!-- TREND TOPPING -->
     ${topToppings.length ? `
     <div class="card">
       <div class="card-title">
-        <div class="card-title-left">🫧 Trend topping theo ngày</div>
+        <div class="card-title-left">🫧 Trend topping theo ngày — Top 10</div>
         <span class="tag tag-gold" style="font-size:10px">Bấm tên topping để ẩn/hiện</span>
       </div>
       <div style="position:relative;height:380px">
         <canvas id="chart-trend-topping"></canvas>
       </div>
+      <div id="chart-trend-topping-note" style="font-size:11px;color:var(--text3);margin-top:8px;font-style:italic;text-align:center"></div>
     </div>` : ''}
   `;
 
@@ -3243,6 +3245,18 @@ function renderTrendAll(topItems) {
   if (_trendChart) { _trendChart.destroy(); _trendChart = null; }
   if (!topItems || !topItems.length) return;
 
+  // CHỈ vẽ top 10 món bán chạy nhất để biểu đồ không rối
+  const totalItems = topItems.length;
+  const showItems = topItems.slice(0, 10);
+  const hiddenCount = totalItems - showItems.length;
+  // Hiện note dưới chart nếu có món bị ẩn
+  const noteEl = document.getElementById('chart-trend-note');
+  if (noteEl) {
+    noteEl.textContent = hiddenCount > 0
+      ? `Đang hiện ${showItems.length}/${totalItems} món bán chạy nhất · ${hiddenCount} món có doanh số thấp đã ẩn`
+      : `Đang hiện toàn bộ ${showItems.length} món`;
+  }
+
   // Tạo danh sách ngày liền mạch trong khoảng filter
   const { from, to } = _dataCache;
   const dateKeys = [];
@@ -3256,7 +3270,7 @@ function renderTrendAll(topItems) {
   const displayLabels = dateKeys.map(d => d.slice(5)); // chỉ hiện MM-DD
 
   // Một dataset cho mỗi món (xếp theo top bán chạy)
-  const datasets = topItems.map((it, i) => {
+  const datasets = showItems.map((it, i) => {
     const dayMap = {};
     _dataCache.rows.forEach(r => {
       if (r.ItemName !== it.name) return;
@@ -3274,8 +3288,6 @@ function renderTrendAll(topItems) {
       borderWidth: 2,
       pointRadius: 2,
       pointHoverRadius: 5,
-      // Mặc định chỉ hiện 8 món top, các món sau ẩn (user click legend bật)
-      hidden: i >= 8,
     };
   });
 
@@ -3323,6 +3335,17 @@ function renderTrendToppings(topToppings) {
   if (_trendToppingChart) { _trendToppingChart.destroy(); _trendToppingChart = null; }
   if (!topToppings || !topToppings.length) return;
 
+  // CHỈ vẽ top 10 topping bán chạy nhất
+  const total = topToppings.length;
+  const show = topToppings.slice(0, 10);
+  const hiddenCount = total - show.length;
+  const noteEl = document.getElementById('chart-trend-topping-note');
+  if (noteEl) {
+    noteEl.textContent = hiddenCount > 0
+      ? `Đang hiện ${show.length}/${total} topping bán chạy nhất · ${hiddenCount} loại khác đã ẩn`
+      : `Đang hiện toàn bộ ${show.length} topping`;
+  }
+
   // Tạo danh sách ngày liền mạch trong khoảng filter
   const { from, to } = _dataCache;
   const dateKeys = [];
@@ -3336,7 +3359,7 @@ function renderTrendToppings(topToppings) {
   const displayLabels = dateKeys.map(d => d.slice(5));
 
   // Mỗi topping = 1 dataset
-  const datasets = topToppings.map((tp, i) => {
+  const datasets = show.map((tp, i) => {
     const dayMap = {};
     _dataCache.rows.forEach(r => {
       const str = String(r.Toppings || '').trim();
@@ -3358,7 +3381,6 @@ function renderTrendToppings(topToppings) {
       borderWidth: 2,
       pointRadius: 2,
       pointHoverRadius: 5,
-      hidden: i >= 8,
     };
   });
 
