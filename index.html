@@ -945,6 +945,7 @@ const ADMIN_NAV = [
   {id:'menu',      icon:'🍽️', label:'Quản lý món'},
   {id:'pos',       icon:'🧾', label:'Bán hàng'},
   {id:'history',   icon:'📋', label:'Lịch sử'},
+  {id:'data',      icon:'📈', label:'Phân tích'},
 ];
 const STAFF_NAV = [{id:'pos',icon:'🧾',label:'Bán hàng'}];
 
@@ -971,6 +972,7 @@ function navigateTo(page) {
     else if (page==='menu')      renderMenuMgmt();
     else if (page==='pos')       renderPOS();
     else if (page==='history')   renderHistory();
+    else if (page==='data')      renderData();
   }, 80);
 }
 
@@ -2487,6 +2489,10 @@ async function doCheckout() {
   });
   await logHistory(tableId, `Thanh toán ${fmtMoney(total)}`, sessionId);
 
+  // ─── PUSH LÊN GOOGLE SHEET (background, không chặn UI) ───
+  pushToSheet({ tableNum, sessionId, merged, total,
+                staffName: myName() }).catch(e => console.warn('sheet push fail:', e));
+
   // Lưu ord để in (vì sau deleteDoc thì orders[tableId] mất)
   const ordSnapshot = JSON.parse(JSON.stringify(ord));
   const mergedSnapshot = mergeOrderItems(ordSnapshot.items||[]);
@@ -2839,6 +2845,372 @@ async function confirmClearNotifications() {
   const snap = await getDocs(collection(window._db,'notifications'));
   await Promise.all(snap.docs.map(d => deleteDoc(doc(window._db,'notifications',d.id))));
   toast(`Đã xoá ${snap.docs.length} thông báo ✅`,'ok');
+}
+
+// ═══════════ GOOGLE SHEET INTEGRATION ═══════════
+async function pushToSheet({ tableNum, sessionId, merged, total, staffName }) {
+  const now = new Date();
+  const isoTs = now.toISOString();
+  const dateStr = isoTs.slice(0, 10); // YYYY-MM-DD
+  // Mỗi món = 1 row (line item)
+  const rows = merged.map(it => [
+    isoTs,
+    dateStr,
+    sessionId,
+    String(tableNum),
+    it.name || '',
+    it.size || '',
+    (it.toppings && it.toppings.length) ? it.toppings.join(', ') : '',
+    it.qty || 1,
+    it.price || 0,
+    (it.price || 0) * (it.qty || 1),
+    total,
+    staffName || ''
+  ]);
+  const res = await fetch('/api/sheet', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'append', rows })
+  });
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.error || 'Sheet push failed');
+  return data;
+}
+
+// Load Chart.js dynamic (chỉ khi vào tab Data)
+let _chartJsLoading = null;
+function loadChartJs() {
+  if (window.Chart) return Promise.resolve();
+  if (_chartJsLoading) return _chartJsLoading;
+  _chartJsLoading = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js';
+    s.onload = resolve;
+    s.onerror = () => reject(new Error('Không tải được Chart.js'));
+    document.head.appendChild(s);
+  });
+  return _chartJsLoading;
+}
+
+// ═══════════ DATA / PHÂN TÍCH PAGE ═══════════
+let _dataCache = { rows: [], from: '', to: '' };
+let _trendChart = null;
+
+function renderData() {
+  const today = new Date().toISOString().slice(0,10);
+  const monthAgo = new Date(Date.now() - 30*86400000).toISOString().slice(0,10);
+
+  document.getElementById('main').innerHTML = `
+    <div class="ph">
+      <div>
+        <div class="ph-title">📈 Phân tích dữ liệu</div>
+        <div class="ph-sub">Đọc từ Google Sheet · phân tích theo khoảng ngày</div>
+      </div>
+    </div>
+
+    <div class="filter-bar">
+      <div class="field" style="margin-bottom:0">
+        <label>Từ ngày</label>
+        <input type="date" class="inp inp-sm" id="dflt-from" value="${monthAgo}">
+      </div>
+      <div class="field" style="margin-bottom:0">
+        <label>Đến ngày</label>
+        <input type="date" class="inp inp-sm" id="dflt-to" value="${today}">
+      </div>
+      <button class="btn btn-gold btn-sm" onclick="loadData()">🔄 Tải dữ liệu</button>
+      <button class="btn btn-outline btn-sm" onclick="setDataQuickRange('today')">Hôm nay</button>
+      <button class="btn btn-outline btn-sm" onclick="setDataQuickRange('7d')">7 ngày</button>
+      <button class="btn btn-outline btn-sm" onclick="setDataQuickRange('30d')">30 ngày</button>
+      <button class="btn btn-outline btn-sm" onclick="setDataQuickRange('month')">Tháng này</button>
+    </div>
+
+    <div id="data-summary"></div>
+    <div id="data-area"><div class="empty">Bấm "Tải dữ liệu" để xem phân tích</div></div>
+  `;
+}
+
+function setDataQuickRange(kind) {
+  const today = new Date();
+  let from = new Date();
+  if (kind === 'today') from = today;
+  else if (kind === '7d') from = new Date(Date.now() - 6*86400000);
+  else if (kind === '30d') from = new Date(Date.now() - 29*86400000);
+  else if (kind === 'month') from = new Date(today.getFullYear(), today.getMonth(), 1);
+  document.getElementById('dflt-from').value = from.toISOString().slice(0,10);
+  document.getElementById('dflt-to').value   = today.toISOString().slice(0,10);
+  loadData();
+}
+
+async function loadData() {
+  const from = document.getElementById('dflt-from').value;
+  const to   = document.getElementById('dflt-to').value;
+  if (!from || !to) return toast('Chọn khoảng ngày', 'err');
+  if (from > to) return toast('Từ ngày phải ≤ đến ngày', 'err');
+
+  const area = document.getElementById('data-area');
+  const sumArea = document.getElementById('data-summary');
+  area.innerHTML = '<div class="spinner"></div>';
+  sumArea.innerHTML = '';
+
+  try {
+    const res = await fetch(`/api/sheet?action=read&fromDate=${from}&toDate=${to}`);
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'Lỗi đọc Sheet');
+
+    _dataCache = { rows: data.rows || [], from, to };
+    await loadChartJs();
+    renderDataAnalysis();
+  } catch(e) {
+    console.error('loadData error:', e);
+    area.innerHTML = `<div class="empty">❌ Lỗi: ${e.message}<br><br>Kiểm tra:<br>
+      • Env var <code>TOKEN_GOOGLE_SHEEET</code> trên Vercel<br>
+      • Apps Script đã deploy "Anyone access"<br>
+      • Sheet có dữ liệu (cần thanh toán ít nhất 1 đơn)
+    </div>`;
+  }
+}
+
+function renderDataAnalysis() {
+  const { rows, from, to } = _dataCache;
+  const area = document.getElementById('data-area');
+  const sumArea = document.getElementById('data-summary');
+
+  if (!rows.length) {
+    sumArea.innerHTML = '';
+    area.innerHTML = `<div class="empty">Không có dữ liệu trong khoảng ${from} → ${to}</div>`;
+    return;
+  }
+
+  // ─── TÍNH TOÁN ───
+  const totalRevenue = rows.reduce((s,r) => s + Number(r.LineTotal||0), 0);
+  const totalOrders = new Set(rows.map(r => r.SessionId)).size;
+  const totalItems = rows.reduce((s,r) => s + Number(r.Qty||0), 0);
+  const avgOrder = totalOrders ? totalRevenue/totalOrders : 0;
+
+  // Top món bán chạy (theo QTY)
+  const itemMap = {};
+  rows.forEach(r => {
+    const key = r.ItemName || '?';
+    if (!itemMap[key]) itemMap[key] = { name: key, qty: 0, revenue: 0 };
+    itemMap[key].qty += Number(r.Qty||0);
+    itemMap[key].revenue += Number(r.LineTotal||0);
+  });
+  const topItems = Object.values(itemMap).sort((a,b) => b.qty - a.qty);
+
+  // Doanh thu theo ngày
+  const dayMap = {};
+  rows.forEach(r => {
+    const d = String(r.Date||'').slice(0,10);
+    if (!d) return;
+    if (!dayMap[d]) dayMap[d] = 0;
+    dayMap[d] += Number(r.LineTotal||0);
+  });
+  const dayLabels = Object.keys(dayMap).sort();
+  const dayValues = dayLabels.map(d => dayMap[d]);
+
+  // ─── RENDER SUMMARY ───
+  sumArea.innerHTML = `
+    <div class="stats-grid">
+      <div class="stat">
+        <div class="stat-label">Doanh thu</div>
+        <div class="stat-val">${fmtMoney(totalRevenue)}</div>
+        <div class="stat-sub">${from} → ${to}</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Số đơn</div>
+        <div class="stat-val">${totalOrders}</div>
+        <div class="stat-sub">TB: ${fmtMoney(avgOrder)}/đơn</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Số món bán</div>
+        <div class="stat-val">${totalItems}</div>
+        <div class="stat-sub">${topItems.length} món khác nhau</div>
+      </div>
+      <div class="stat">
+        <div class="stat-label">Top 1</div>
+        <div class="stat-val" style="font-size:18px">${topItems[0]?.name || '-'}</div>
+        <div class="stat-sub">${topItems[0]?.qty || 0} ly · ${fmtMoney(topItems[0]?.revenue||0)}</div>
+      </div>
+    </div>
+  `;
+
+  // ─── RENDER PHẦN BIỂU ĐỒ & BẢNG ───
+  area.innerHTML = `
+    <!-- DOANH THU THEO NGÀY -->
+    <div class="card">
+      <div class="card-title">📅 Doanh thu theo ngày</div>
+      <div style="position:relative;height:280px">
+        <canvas id="chart-revenue"></canvas>
+      </div>
+    </div>
+
+    <!-- TOP MÓN BÁN CHẠY -->
+    <div class="card">
+      <div class="card-title">
+        <div class="card-title-left">🏆 Top món bán chạy</div>
+        <span class="tag tag-gold">${topItems.length} món</span>
+      </div>
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr><th>#</th><th>Tên món</th><th style="text-align:right">SL</th><th style="text-align:right">Doanh thu</th><th style="text-align:right">% DT</th><th></th></tr>
+          </thead>
+          <tbody>
+            ${topItems.slice(0, 50).map((it, i) => `
+              <tr>
+                <td>${i+1}</td>
+                <td><strong>${escapeHTML(it.name)}</strong></td>
+                <td style="text-align:right;color:var(--accent2);font-weight:600">${it.qty}</td>
+                <td style="text-align:right">${fmtMoney(it.revenue)}</td>
+                <td style="text-align:right;color:var(--text3)">${((it.revenue/totalRevenue)*100).toFixed(1)}%</td>
+                <td><button class="btn btn-outline btn-xs" onclick="showItemTrend('${it.name.replace(/'/g,"\\'")}')">📉 Trend</button></td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- TREND TỪNG MÓN -->
+    <div class="card">
+      <div class="card-title">
+        <div class="card-title-left">📉 Trend theo món</div>
+      </div>
+      <select id="trend-item-select" class="inp inp-sm" style="max-width:300px;margin-bottom:12px" onchange="renderTrendChart(this.value)">
+        <option value="">— Chọn món —</option>
+        ${topItems.map(it => `<option value="${escapeHTML(it.name)}">${escapeHTML(it.name)} (${it.qty})</option>`).join('')}
+      </select>
+      <div style="position:relative;height:260px">
+        <canvas id="chart-trend"></canvas>
+      </div>
+    </div>
+  `;
+
+  // Vẽ biểu đồ doanh thu theo ngày
+  renderRevenueChart(dayLabels, dayValues);
+}
+
+function renderRevenueChart(labels, values) {
+  const ctx = document.getElementById('chart-revenue');
+  if (!ctx || !window.Chart) return;
+  const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#c9a84c';
+  const accent2 = getComputedStyle(document.documentElement).getPropertyValue('--accent2').trim() || '#e8c96a';
+  const text3 = getComputedStyle(document.documentElement).getPropertyValue('--text3').trim() || '#6b5f52';
+  const border = getComputedStyle(document.documentElement).getPropertyValue('--border').trim() || '#3a332c';
+
+  new Chart(ctx, {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [{
+        label: 'Doanh thu',
+        data: values,
+        backgroundColor: accent + 'cc',
+        borderColor: accent2,
+        borderWidth: 1,
+        borderRadius: 4,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: (c) => fmtMoney(c.parsed.y) + ' ₫'
+          }
+        }
+      },
+      scales: {
+        x: { ticks: { color: text3 }, grid: { color: border } },
+        y: {
+          ticks: { color: text3, callback: v => (v/1000) + 'k' },
+          grid: { color: border }
+        }
+      }
+    }
+  });
+}
+
+function showItemTrend(name) {
+  const sel = document.getElementById('trend-item-select');
+  if (sel) sel.value = name;
+  renderTrendChart(name);
+  // Scroll xuống biểu đồ
+  document.getElementById('chart-trend')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+function renderTrendChart(itemName) {
+  const ctx = document.getElementById('chart-trend');
+  if (!ctx || !window.Chart) return;
+  if (_trendChart) { _trendChart.destroy(); _trendChart = null; }
+  if (!itemName) return;
+
+  // Lọc rows theo món, gộp theo ngày
+  const dayMap = {};
+  const revMap = {};
+  _dataCache.rows.forEach(r => {
+    if (r.ItemName !== itemName) return;
+    const d = String(r.Date||'').slice(0,10);
+    if (!d) return;
+    dayMap[d] = (dayMap[d]||0) + Number(r.Qty||0);
+    revMap[d] = (revMap[d]||0) + Number(r.LineTotal||0);
+  });
+
+  // Fill đủ các ngày trong khoảng
+  const { from, to } = _dataCache;
+  const labels = [];
+  const values = [];
+  const revenues = [];
+  let cur = new Date(from);
+  const end = new Date(to);
+  while (cur <= end) {
+    const d = cur.toISOString().slice(0,10);
+    labels.push(d.slice(5)); // chỉ hiện MM-DD cho gọn
+    values.push(dayMap[d] || 0);
+    revenues.push(revMap[d] || 0);
+    cur.setDate(cur.getDate()+1);
+    if (labels.length > 366) break; // safety
+  }
+
+  const accent  = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#c9a84c';
+  const accent2 = getComputedStyle(document.documentElement).getPropertyValue('--accent2').trim() || '#e8c96a';
+  const text3   = getComputedStyle(document.documentElement).getPropertyValue('--text3').trim() || '#6b5f52';
+  const border  = getComputedStyle(document.documentElement).getPropertyValue('--border').trim() || '#3a332c';
+
+  _trendChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        label: 'SL bán: ' + itemName,
+        data: values,
+        borderColor: accent2,
+        backgroundColor: accent + '33',
+        fill: true,
+        tension: 0.3,
+        pointRadius: 3,
+        pointBackgroundColor: accent2,
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { labels: { color: text3 } },
+        tooltip: {
+          callbacks: {
+            afterLabel: (c) => 'Doanh thu: ' + fmtMoney(revenues[c.dataIndex]||0) + ' ₫'
+          }
+        }
+      },
+      scales: {
+        x: { ticks: { color: text3 }, grid: { color: border } },
+        y: { ticks: { color: text3, precision: 0 }, grid: { color: border }, beginAtZero: true }
+      }
+    }
+  });
 }
 </script>
 
