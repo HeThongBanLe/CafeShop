@@ -2895,6 +2895,8 @@ function loadChartJs() {
 // ═══════════ DATA / PHÂN TÍCH PAGE ═══════════
 let _dataCache = { rows: [], from: '', to: '' };
 let _trendChart = null;
+let _trendToppingChart = null;
+let _revenueChart = null;
 
 function renderData() {
   const today = new Date().toISOString().slice(0,10);
@@ -2997,6 +2999,24 @@ function renderDataAnalysis() {
   });
   const topItems = Object.values(itemMap).sort((a,b) => b.qty - a.qty);
 
+  // ─── PARSE TOPPING ───
+  // Mỗi row có thể có nhiều topping (CSV "trân châu, thạch dừa")
+  // Mỗi topping được tính = qty của món chính chứa nó
+  const toppingMap = {};
+  rows.forEach(r => {
+    const str = String(r.Toppings || '').trim();
+    if (!str) return;
+    const qty = Number(r.Qty || 0);
+    str.split(',').forEach(t => {
+      const name = t.trim();
+      if (!name) return;
+      if (!toppingMap[name]) toppingMap[name] = { name, qty: 0, orders: 0 };
+      toppingMap[name].qty += qty;       // tổng SL topping được gọi
+      toppingMap[name].orders += 1;       // số dòng order chứa topping này
+    });
+  });
+  const topToppings = Object.values(toppingMap).sort((a,b) => b.qty - a.qty);
+
   // Doanh thu theo ngày
   const dayMap = {};
   rows.forEach(r => {
@@ -3053,7 +3073,7 @@ function renderDataAnalysis() {
       <div class="tbl-wrap">
         <table>
           <thead>
-            <tr><th>#</th><th>Tên món</th><th style="text-align:right">SL</th><th style="text-align:right">Doanh thu</th><th style="text-align:right">% DT</th><th></th></tr>
+            <tr><th>#</th><th>Tên món</th><th style="text-align:right">SL</th><th style="text-align:right">Doanh thu</th><th style="text-align:right">% DT</th></tr>
           </thead>
           <tbody>
             ${topItems.slice(0, 50).map((it, i) => `
@@ -3063,7 +3083,6 @@ function renderDataAnalysis() {
                 <td style="text-align:right;color:var(--accent2);font-weight:600">${it.qty}</td>
                 <td style="text-align:right">${fmtMoney(it.revenue)}</td>
                 <td style="text-align:right;color:var(--text3)">${((it.revenue/totalRevenue)*100).toFixed(1)}%</td>
-                <td><button class="btn btn-outline btn-xs" onclick="showItemTrend('${it.name.replace(/'/g,"\\'")}')">📉 Trend</button></td>
               </tr>
             `).join('')}
           </tbody>
@@ -3071,34 +3090,109 @@ function renderDataAnalysis() {
       </div>
     </div>
 
-    <!-- TREND TỪNG MÓN -->
+    <!-- TOP TOPPING BÁN CHẠY -->
+    ${topToppings.length ? `
     <div class="card">
       <div class="card-title">
-        <div class="card-title-left">📉 Trend theo món</div>
+        <div class="card-title-left">🫧 Top topping được gọi nhiều</div>
+        <span class="tag tag-gold">${topToppings.length} loại</span>
       </div>
-      <select id="trend-item-select" class="inp inp-sm" style="max-width:300px;margin-bottom:12px" onchange="renderTrendChart(this.value)">
-        <option value="">— Chọn món —</option>
-        ${topItems.map(it => `<option value="${escapeHTML(it.name)}">${escapeHTML(it.name)} (${it.qty})</option>`).join('')}
-      </select>
-      <div style="position:relative;height:260px">
+      <div class="tbl-wrap">
+        <table>
+          <thead>
+            <tr><th>#</th><th>Topping</th><th style="text-align:right">SL gọi</th><th style="text-align:right">Số đơn</th><th style="text-align:right">% đơn có</th></tr>
+          </thead>
+          <tbody>
+            ${topToppings.slice(0, 50).map((tp, i) => `
+              <tr>
+                <td>${i+1}</td>
+                <td><strong>${escapeHTML(tp.name)}</strong></td>
+                <td style="text-align:right;color:var(--accent2);font-weight:600">${tp.qty}</td>
+                <td style="text-align:right">${tp.orders}</td>
+                <td style="text-align:right;color:var(--text3)">${((tp.orders/rows.length)*100).toFixed(1)}%</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin-top:8px;font-style:italic">
+        💡 SL gọi = tổng số lượng topping bán; Số đơn = số dòng món có topping này
+      </div>
+    </div>` : ''}
+
+    <!-- TREND TẤT CẢ MÓN -->
+    <div class="card">
+      <div class="card-title">
+        <div class="card-title-left">📉 Trend bán theo ngày — tất cả món</div>
+        <span class="tag tag-gold" style="font-size:10px">Bấm tên món bên trên để ẩn/hiện</span>
+      </div>
+      <div style="position:relative;height:380px">
         <canvas id="chart-trend"></canvas>
       </div>
     </div>
+
+    <!-- TREND TOPPING -->
+    ${topToppings.length ? `
+    <div class="card">
+      <div class="card-title">
+        <div class="card-title-left">🫧 Trend topping theo ngày</div>
+        <span class="tag tag-gold" style="font-size:10px">Bấm tên topping để ẩn/hiện</span>
+      </div>
+      <div style="position:relative;height:380px">
+        <canvas id="chart-trend-topping"></canvas>
+      </div>
+    </div>` : ''}
   `;
 
   // Vẽ biểu đồ doanh thu theo ngày
   renderRevenueChart(dayLabels, dayValues);
+  // Vẽ trend tất cả món
+  renderTrendAll(topItems);
+  // Vẽ trend topping (nếu có)
+  if (topToppings.length) renderTrendToppings(topToppings);
 }
 
 function renderRevenueChart(labels, values) {
   const ctx = document.getElementById('chart-revenue');
   if (!ctx || !window.Chart) return;
+  if (_revenueChart) { _revenueChart.destroy(); _revenueChart = null; }
+
   const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#c9a84c';
   const accent2 = getComputedStyle(document.documentElement).getPropertyValue('--accent2').trim() || '#e8c96a';
   const text3 = getComputedStyle(document.documentElement).getPropertyValue('--text3').trim() || '#6b5f52';
   const border = getComputedStyle(document.documentElement).getPropertyValue('--border').trim() || '#3a332c';
+  const cream  = getComputedStyle(document.documentElement).getPropertyValue('--cream').trim() || '#f5ead8';
 
-  new Chart(ctx, {
+  // Format ngắn cho data label (30k, 1.2M)
+  const fmtShort = (v) => {
+    if (v >= 1e6) return (v/1e6).toFixed(v >= 10e6 ? 0 : 1) + 'M';
+    if (v >= 1000) return Math.round(v/1000) + 'k';
+    return String(v||0);
+  };
+
+  // Plugin vẽ số tiền trên đỉnh từng cột
+  const topLabelPlugin = {
+    id: 'topLabel',
+    afterDatasetsDraw(chart) {
+      const c = chart.ctx;
+      chart.data.datasets.forEach((ds, di) => {
+        const meta = chart.getDatasetMeta(di);
+        meta.data.forEach((el, i) => {
+          const v = ds.data[i];
+          if (!v) return;
+          c.save();
+          c.fillStyle = cream;
+          c.font = 'bold 11px "DM Sans", sans-serif';
+          c.textAlign = 'center';
+          c.textBaseline = 'bottom';
+          c.fillText(fmtShort(v), el.x, el.y - 4);
+          c.restore();
+        });
+      });
+    }
+  };
+
+  _revenueChart = new Chart(ctx, {
     type: 'bar',
     data: {
       labels,
@@ -3114,6 +3208,7 @@ function renderRevenueChart(labels, values) {
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      layout: { padding: { top: 22 } }, // chừa chỗ cho data label
       plugins: {
         legend: { display: false },
         tooltip: {
@@ -3125,85 +3220,165 @@ function renderRevenueChart(labels, values) {
       scales: {
         x: { ticks: { color: text3 }, grid: { color: border } },
         y: {
-          ticks: { color: text3, callback: v => (v/1000) + 'k' },
+          ticks: { color: text3, callback: v => fmtShort(v) },
           grid: { color: border }
         }
+      }
+    },
+    plugins: [topLabelPlugin]
+  });
+}
+
+// Palette màu cho multi-line trend (đảm bảo các món có màu khác nhau, dễ nhìn)
+const TREND_PALETTE = [
+  '#c9a84c', '#3dbfa0', '#d4627a', '#7b72e9', '#6b9e5e',
+  '#4a9eff', '#e09a30', '#5a8fc9', '#e05a4e', '#88bb7a',
+  '#b8843d', '#9e97f5', '#f0849a', '#5ed9bc', '#f5b84a',
+  '#d4a05a', '#6db4ff', '#5aab7a'
+];
+
+function renderTrendAll(topItems) {
+  const ctx = document.getElementById('chart-trend');
+  if (!ctx || !window.Chart) return;
+  if (_trendChart) { _trendChart.destroy(); _trendChart = null; }
+  if (!topItems || !topItems.length) return;
+
+  // Tạo danh sách ngày liền mạch trong khoảng filter
+  const { from, to } = _dataCache;
+  const dateKeys = [];
+  let cur = new Date(from);
+  const end = new Date(to);
+  while (cur <= end) {
+    dateKeys.push(cur.toISOString().slice(0,10));
+    cur.setDate(cur.getDate()+1);
+    if (dateKeys.length > 366) break; // safety
+  }
+  const displayLabels = dateKeys.map(d => d.slice(5)); // chỉ hiện MM-DD
+
+  // Một dataset cho mỗi món (xếp theo top bán chạy)
+  const datasets = topItems.map((it, i) => {
+    const dayMap = {};
+    _dataCache.rows.forEach(r => {
+      if (r.ItemName !== it.name) return;
+      const d = String(r.Date||'').slice(0,10);
+      if (!d) return;
+      dayMap[d] = (dayMap[d]||0) + Number(r.Qty||0);
+    });
+    const color = TREND_PALETTE[i % TREND_PALETTE.length];
+    return {
+      label: it.name + ` (${it.qty})`,
+      data: dateKeys.map(d => dayMap[d] || 0),
+      borderColor: color,
+      backgroundColor: color + '20',
+      tension: 0.3,
+      borderWidth: 2,
+      pointRadius: 2,
+      pointHoverRadius: 5,
+      // Mặc định chỉ hiện 8 món top, các món sau ẩn (user click legend bật)
+      hidden: i >= 8,
+    };
+  });
+
+  const text3  = getComputedStyle(document.documentElement).getPropertyValue('--text3').trim() || '#6b5f52';
+  const text2  = getComputedStyle(document.documentElement).getPropertyValue('--text2').trim() || '#b0a090';
+  const border = getComputedStyle(document.documentElement).getPropertyValue('--border').trim() || '#3a332c';
+
+  _trendChart = new Chart(ctx, {
+    type: 'line',
+    data: { labels: displayLabels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: {
+          position: 'top',
+          labels: {
+            color: text2,
+            boxWidth: 12,
+            padding: 8,
+            font: { size: 11 },
+            usePointStyle: true,
+          }
+        },
+        tooltip: {
+          mode: 'index',
+          intersect: false,
+          // Chỉ hiện các dòng có giá trị > 0 để tooltip không quá dài
+          filter: (item) => item.parsed.y > 0,
+        }
+      },
+      scales: {
+        x: { ticks: { color: text3 }, grid: { color: border } },
+        y: { ticks: { color: text3, precision: 0 }, grid: { color: border }, beginAtZero: true }
       }
     }
   });
 }
 
-function showItemTrend(name) {
-  const sel = document.getElementById('trend-item-select');
-  if (sel) sel.value = name;
-  renderTrendChart(name);
-  // Scroll xuống biểu đồ
-  document.getElementById('chart-trend')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
-}
-
-function renderTrendChart(itemName) {
-  const ctx = document.getElementById('chart-trend');
+// Trend topping theo ngày - cùng cách hiển thị như món chính
+function renderTrendToppings(topToppings) {
+  const ctx = document.getElementById('chart-trend-topping');
   if (!ctx || !window.Chart) return;
-  if (_trendChart) { _trendChart.destroy(); _trendChart = null; }
-  if (!itemName) return;
+  if (_trendToppingChart) { _trendToppingChart.destroy(); _trendToppingChart = null; }
+  if (!topToppings || !topToppings.length) return;
 
-  // Lọc rows theo món, gộp theo ngày
-  const dayMap = {};
-  const revMap = {};
-  _dataCache.rows.forEach(r => {
-    if (r.ItemName !== itemName) return;
-    const d = String(r.Date||'').slice(0,10);
-    if (!d) return;
-    dayMap[d] = (dayMap[d]||0) + Number(r.Qty||0);
-    revMap[d] = (revMap[d]||0) + Number(r.LineTotal||0);
-  });
-
-  // Fill đủ các ngày trong khoảng
+  // Tạo danh sách ngày liền mạch trong khoảng filter
   const { from, to } = _dataCache;
-  const labels = [];
-  const values = [];
-  const revenues = [];
+  const dateKeys = [];
   let cur = new Date(from);
   const end = new Date(to);
   while (cur <= end) {
-    const d = cur.toISOString().slice(0,10);
-    labels.push(d.slice(5)); // chỉ hiện MM-DD cho gọn
-    values.push(dayMap[d] || 0);
-    revenues.push(revMap[d] || 0);
+    dateKeys.push(cur.toISOString().slice(0,10));
     cur.setDate(cur.getDate()+1);
-    if (labels.length > 366) break; // safety
+    if (dateKeys.length > 366) break;
   }
+  const displayLabels = dateKeys.map(d => d.slice(5));
 
-  const accent  = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#c9a84c';
-  const accent2 = getComputedStyle(document.documentElement).getPropertyValue('--accent2').trim() || '#e8c96a';
-  const text3   = getComputedStyle(document.documentElement).getPropertyValue('--text3').trim() || '#6b5f52';
-  const border  = getComputedStyle(document.documentElement).getPropertyValue('--border').trim() || '#3a332c';
+  // Mỗi topping = 1 dataset
+  const datasets = topToppings.map((tp, i) => {
+    const dayMap = {};
+    _dataCache.rows.forEach(r => {
+      const str = String(r.Toppings || '').trim();
+      if (!str) return;
+      // Có chứa topping này không?
+      const list = str.split(',').map(x => x.trim());
+      if (!list.includes(tp.name)) return;
+      const d = String(r.Date||'').slice(0,10);
+      if (!d) return;
+      dayMap[d] = (dayMap[d]||0) + Number(r.Qty||0);
+    });
+    const color = TREND_PALETTE[i % TREND_PALETTE.length];
+    return {
+      label: tp.name + ` (${tp.qty})`,
+      data: dateKeys.map(d => dayMap[d] || 0),
+      borderColor: color,
+      backgroundColor: color + '20',
+      tension: 0.3,
+      borderWidth: 2,
+      pointRadius: 2,
+      pointHoverRadius: 5,
+      hidden: i >= 8,
+    };
+  });
 
-  _trendChart = new Chart(ctx, {
+  const text3  = getComputedStyle(document.documentElement).getPropertyValue('--text3').trim() || '#6b5f52';
+  const text2  = getComputedStyle(document.documentElement).getPropertyValue('--text2').trim() || '#b0a090';
+  const border = getComputedStyle(document.documentElement).getPropertyValue('--border').trim() || '#3a332c';
+
+  _trendToppingChart = new Chart(ctx, {
     type: 'line',
-    data: {
-      labels,
-      datasets: [{
-        label: 'SL bán: ' + itemName,
-        data: values,
-        borderColor: accent2,
-        backgroundColor: accent + '33',
-        fill: true,
-        tension: 0.3,
-        pointRadius: 3,
-        pointBackgroundColor: accent2,
-      }]
-    },
+    data: { labels: displayLabels, datasets },
     options: {
       responsive: true,
       maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
       plugins: {
-        legend: { labels: { color: text3 } },
-        tooltip: {
-          callbacks: {
-            afterLabel: (c) => 'Doanh thu: ' + fmtMoney(revenues[c.dataIndex]||0) + ' ₫'
-          }
-        }
+        legend: {
+          position: 'top',
+          labels: { color: text2, boxWidth: 12, padding: 8, font: { size: 11 }, usePointStyle: true }
+        },
+        tooltip: { mode: 'index', intersect: false, filter: (item) => item.parsed.y > 0 }
       },
       scales: {
         x: { ticks: { color: text3 }, grid: { color: border } },
