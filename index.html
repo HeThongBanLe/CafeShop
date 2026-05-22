@@ -298,6 +298,19 @@ tbody tr:hover td{background:rgba(255,255,255,.02)}
 .empty{text-align:center;color:var(--text3);padding:32px;font-size:13px}
 .divider{height:1px;background:var(--border);margin:12px 0}
 .badge{display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;border-radius:50%;background:var(--red);color:#fff;font-size:10px;font-weight:700;margin-left:4px}
+
+/* ─── INVENTORY (kho) ─── */
+.inv-tabs{display:flex;gap:6px;margin-bottom:16px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:6px;overflow-x:auto}
+.inv-tab{flex:1;min-width:110px;padding:10px 14px;background:transparent;border:none;color:var(--text2);font-family:inherit;font-size:13px;font-weight:600;border-radius:7px;cursor:pointer;transition:all .2s;white-space:nowrap}
+.inv-tab:hover{background:rgba(255,255,255,.04);color:var(--cream)}
+.inv-tab.active{background:var(--accent);color:#1a1612}
+.inv-scan-row{display:flex;gap:8px;align-items:stretch;flex-wrap:wrap}
+.inv-scan-row .inp{flex:1;min-width:180px}
+.inv-info-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:8px 16px;padding:12px;background:rgba(255,255,255,.02);border-radius:8px;margin-bottom:14px;font-size:13px}
+.inv-lbl{color:var(--text3);font-size:11px;display:inline-block;min-width:90px}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.form-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
+@media (max-width:520px){.grid-2{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -943,6 +956,7 @@ const ADMIN_NAV = [
   {id:'config',    icon:'⚙️', label:'Cấu hình quán'},
   {id:'staff',     icon:'👥', label:'Nhân viên'},
   {id:'menu',      icon:'🍽️', label:'Quản lý món'},
+  {id:'inventory', icon:'📦', label:'Quản lý kho'},
   {id:'pos',       icon:'🧾', label:'Bán hàng'},
   {id:'history',   icon:'📋', label:'Lịch sử'},
   {id:'data',      icon:'📈', label:'Phân tích'},
@@ -970,6 +984,7 @@ function navigateTo(page) {
     else if (page==='config')    renderConfig();
     else if (page==='staff')     renderStaff();
     else if (page==='menu')      renderMenuMgmt();
+    else if (page==='inventory') renderInventory();
     else if (page==='pos')       renderPOS();
     else if (page==='history')   renderHistory();
     else if (page==='data')      renderData();
@@ -3408,6 +3423,515 @@ function renderTrendToppings(topToppings) {
       }
     }
   });
+}
+
+// ═══════════════════════════════════════════════════════════
+// QUẢN LÝ KHO (INVENTORY)
+// ═══════════════════════════════════════════════════════════
+let _invCache = { items: [], logs: [], loaded: false };
+let _invSubTab = 'in';   // 'in' | 'out' | 'list' | 'log'
+let _qrScanner = null;
+let _qrActiveInputId = null;
+
+// Lazy-load html5-qrcode
+let _qrJsLoading = null;
+function loadQrJs() {
+  if (window.Html5Qrcode) return Promise.resolve();
+  if (_qrJsLoading) return _qrJsLoading;
+  _qrJsLoading = new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/html5-qrcode@2.3.8/html5-qrcode.min.js';
+    s.onload = resolve;
+    s.onerror = () => reject(new Error('Không tải được thư viện quét mã vạch'));
+    document.head.appendChild(s);
+  });
+  return _qrJsLoading;
+}
+
+function renderInventory() {
+  document.getElementById('main').innerHTML = `
+    <div class="ph">
+      <div>
+        <div class="ph-title">📦 Quản lý kho</div>
+        <div class="ph-sub">Nhập – Xuất – Tồn kho · Gõ mã hoặc quét bằng camera</div>
+      </div>
+      <button class="btn btn-outline btn-sm" onclick="loadInventory(true)">🔄 Tải lại</button>
+    </div>
+
+    <div class="inv-tabs">
+      <button class="inv-tab ${_invSubTab==='in'?'active':''}"   onclick="switchInvTab('in')">📥 Nhập kho</button>
+      <button class="inv-tab ${_invSubTab==='out'?'active':''}"  onclick="switchInvTab('out')">📤 Xuất kho</button>
+      <button class="inv-tab ${_invSubTab==='list'?'active':''}" onclick="switchInvTab('list')">📊 Tồn kho</button>
+      <button class="inv-tab ${_invSubTab==='log'?'active':''}"  onclick="switchInvTab('log')">📜 Lịch sử</button>
+    </div>
+
+    <div id="inv-content"><div class="spinner"></div></div>
+  `;
+  loadInventory();
+}
+
+function switchInvTab(tab) {
+  _invSubTab = tab;
+  document.querySelectorAll('.inv-tab').forEach(el => el.classList.remove('active'));
+  event && event.target && event.target.classList.add('active');
+  renderInvSubTab();
+}
+
+async function loadInventory(force) {
+  const content = document.getElementById('inv-content');
+  if (!content) return;
+  if (!_invCache.loaded || force) {
+    content.innerHTML = '<div class="spinner"></div>';
+    try {
+      const res = await fetch('/api/sheet?action=inv_list');
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || 'Lỗi đọc kho');
+      _invCache.items = data.items || [];
+      _invCache.logs = data.logs || [];
+      _invCache.loaded = true;
+    } catch(e) {
+      content.innerHTML = `<div class="empty">❌ Lỗi: ${e.message}<br><br>
+        Kiểm tra:<br>
+        • Apps Script đã update phiên bản v3 (hỗ trợ inv_list)?<br>
+        • Đã Deploy → New version chưa?
+      </div>`;
+      return;
+    }
+  }
+  renderInvSubTab();
+}
+
+function renderInvSubTab() {
+  if (_invSubTab === 'in')   renderInvIn();
+  else if (_invSubTab === 'out') renderInvOut();
+  else if (_invSubTab === 'list') renderInvList();
+  else if (_invSubTab === 'log')  renderInvLog();
+}
+
+// ─── NHẬP KHO ───
+function renderInvIn() {
+  document.getElementById('inv-content').innerHTML = `
+    <div class="card">
+      <div class="card-title"><div class="card-title-left">📥 Nhập kho</div></div>
+      <div class="inv-scan-row">
+        <input class="inp" id="inv-in-code" placeholder="Gõ mã hoặc quét bằng camera..." autocomplete="off" onkeydown="if(event.key==='Enter')invInLookup()">
+        <button class="btn btn-gold" onclick="openScanner('inv-in-code', invInLookup)">📷 Quét</button>
+        <button class="btn btn-outline" onclick="invInLookup()">🔍 Tra</button>
+      </div>
+      <div style="font-size:11px;color:var(--text3);margin-top:6px;font-style:italic">
+        💡 Bỏ trống → tự sinh mã mới (KH001, KH002...)
+      </div>
+    </div>
+    <div id="inv-in-form"></div>
+  `;
+  setTimeout(() => document.getElementById('inv-in-code')?.focus(), 100);
+}
+
+function invInLookup() {
+  const codeRaw = (document.getElementById('inv-in-code').value||'').trim();
+  const code = codeRaw.toUpperCase();
+  const formArea = document.getElementById('inv-in-form');
+
+  if (!code) {
+    // Tự sinh mã mới
+    const newCode = genNextCode();
+    formArea.innerHTML = invInFormNew(newCode);
+    setTimeout(() => document.getElementById('inv-in-name')?.focus(), 100);
+    return;
+  }
+
+  // Có mã trên DB chưa?
+  const existing = _invCache.items.find(it => (it.code||'').toUpperCase() === code);
+  if (existing) {
+    formArea.innerHTML = invInFormExisting(existing);
+    setTimeout(() => document.getElementById('inv-in-qty')?.focus(), 100);
+  } else {
+    formArea.innerHTML = invInFormNew(code);
+    setTimeout(() => document.getElementById('inv-in-name')?.focus(), 100);
+  }
+}
+
+function genNextCode() {
+  // Tìm số lớn nhất trong các mã dạng KHxxx
+  let max = 0;
+  _invCache.items.forEach(it => {
+    const m = String(it.code||'').match(/^KH(\d+)$/i);
+    if (m) max = Math.max(max, parseInt(m[1]));
+  });
+  return 'KH' + String(max + 1).padStart(3, '0');
+}
+
+function invInFormExisting(it) {
+  return `
+    <div class="card" style="border-left:4px solid var(--green)">
+      <div class="card-title"><div class="card-title-left">✏️ Cộng thêm vào hàng đã có</div></div>
+      <div class="inv-info-grid">
+        <div><span class="inv-lbl">Mã:</span> <strong>${escapeHTML(it.code)}</strong></div>
+        <div><span class="inv-lbl">Tên:</span> <strong>${escapeHTML(it.name)}</strong></div>
+        <div><span class="inv-lbl">Tồn hiện tại:</span> <strong style="color:var(--accent2)">${it.stock} ${escapeHTML(it.unit||'')}</strong></div>
+        <div><span class="inv-lbl">Giá nhập:</span> ${fmtMoney(it.price||0)} ₫</div>
+      </div>
+      <div class="grid-2">
+        <div class="field">
+          <label>Số lượng nhập thêm</label>
+          <input class="inp" id="inv-in-qty" type="number" min="0" step="any" inputmode="decimal" placeholder="0">
+        </div>
+        <div class="field">
+          <label>Giá nhập mới (tuỳ chọn, để trống = giữ cũ)</label>
+          <input class="inp" id="inv-in-price" type="number" min="0" placeholder="${it.price||0}">
+        </div>
+      </div>
+      <div class="field">
+        <label>Ghi chú (tuỳ chọn)</label>
+        <input class="inp" id="inv-in-note" placeholder="VD: Nhập từ Coopmart">
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-outline" onclick="cancelInvForm()">Huỷ</button>
+        <button class="btn btn-green" onclick="submitInvIn('${escapeAttr(it.code)}', false)">✅ Xác nhận nhập</button>
+      </div>
+    </div>
+  `;
+}
+
+function invInFormNew(code) {
+  return `
+    <div class="card" style="border-left:4px solid var(--accent)">
+      <div class="card-title"><div class="card-title-left">➕ Thêm hàng mới</div></div>
+      <div class="grid-2">
+        <div class="field">
+          <label>Mã *</label>
+          <input class="inp" id="inv-in-code-new" value="${escapeHTML(code)}">
+        </div>
+        <div class="field">
+          <label>Tên hàng *</label>
+          <input class="inp" id="inv-in-name" placeholder="VD: Cafe rang xay">
+        </div>
+        <div class="field">
+          <label>Số lượng *</label>
+          <input class="inp" id="inv-in-qty" type="number" min="0" step="any" inputmode="decimal" placeholder="0">
+        </div>
+        <div class="field">
+          <label>Đơn vị</label>
+          <input class="inp" id="inv-in-unit" placeholder="lon / kg / gói / chai...">
+        </div>
+        <div class="field">
+          <label>Giá nhập (đ/đv)</label>
+          <input class="inp" id="inv-in-price" type="number" min="0" placeholder="0">
+        </div>
+        <div class="field">
+          <label>Ghi chú</label>
+          <input class="inp" id="inv-in-note" placeholder="VD: NCC ABC">
+        </div>
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-outline" onclick="cancelInvForm()">Huỷ</button>
+        <button class="btn btn-green" onclick="submitInvIn('', true)">✅ Tạo & nhập</button>
+      </div>
+    </div>
+  `;
+}
+
+function cancelInvForm() {
+  document.getElementById('inv-in-form') && (document.getElementById('inv-in-form').innerHTML = '');
+  document.getElementById('inv-out-form') && (document.getElementById('inv-out-form').innerHTML = '');
+  const inEl = document.getElementById('inv-in-code'); if (inEl) { inEl.value = ''; inEl.focus(); }
+  const outEl = document.getElementById('inv-out-code'); if (outEl) { outEl.value = ''; outEl.focus(); }
+}
+
+async function submitInvIn(code, isNew) {
+  let payload;
+  if (isNew) {
+    const newCode = (document.getElementById('inv-in-code-new').value||'').trim().toUpperCase();
+    const name = (document.getElementById('inv-in-name').value||'').trim();
+    const qty  = Number(document.getElementById('inv-in-qty').value||0);
+    const unit = (document.getElementById('inv-in-unit').value||'').trim();
+    const price = Number(document.getElementById('inv-in-price').value||0);
+    const note = (document.getElementById('inv-in-note').value||'').trim();
+    if (!newCode) return toast('Thiếu mã','err');
+    if (!name) return toast('Thiếu tên hàng','err');
+    if (!qty || qty <= 0) return toast('Số lượng phải > 0','err');
+    // Check trùng mã (đề phòng user sửa mã thành mã đã có)
+    if (_invCache.items.some(it => (it.code||'').toUpperCase() === newCode)) {
+      return toast('Mã này đã tồn tại, vui lòng tra trước','err');
+    }
+    payload = { action:'inv_in', code:newCode, name, qty, unit, price, note,
+                staff:myName(), isNew:true };
+  } else {
+    const qty  = Number(document.getElementById('inv-in-qty').value||0);
+    const priceRaw = (document.getElementById('inv-in-price').value||'').trim();
+    const note = (document.getElementById('inv-in-note').value||'').trim();
+    if (!qty || qty <= 0) return toast('Số lượng phải > 0','err');
+    payload = { action:'inv_in', code, qty, note, staff:myName(), isNew:false };
+    if (priceRaw !== '') payload.price = Number(priceRaw);
+  }
+  await sendInvAction(payload, '✅ Đã nhập kho');
+}
+
+// ─── XUẤT KHO ───
+function renderInvOut() {
+  document.getElementById('inv-content').innerHTML = `
+    <div class="card">
+      <div class="card-title"><div class="card-title-left">📤 Xuất kho</div></div>
+      <div class="inv-scan-row">
+        <input class="inp" id="inv-out-code" placeholder="Gõ mã hoặc quét..." autocomplete="off" onkeydown="if(event.key==='Enter')invOutLookup()">
+        <button class="btn btn-gold" onclick="openScanner('inv-out-code', invOutLookup)">📷 Quét</button>
+        <button class="btn btn-outline" onclick="invOutLookup()">🔍 Tra</button>
+      </div>
+    </div>
+    <div id="inv-out-form"></div>
+  `;
+  setTimeout(() => document.getElementById('inv-out-code')?.focus(), 100);
+}
+
+function invOutLookup() {
+  const code = ((document.getElementById('inv-out-code').value||'')+'').trim().toUpperCase();
+  const formArea = document.getElementById('inv-out-form');
+  if (!code) return toast('Nhập mã trước','err');
+
+  const it = _invCache.items.find(x => (x.code||'').toUpperCase() === code);
+  if (!it) {
+    formArea.innerHTML = `<div class="empty" style="color:var(--red)">❌ Không tìm thấy mã <strong>${escapeHTML(code)}</strong> trong kho.<br>Hàng phải được nhập trước khi xuất.</div>`;
+    return;
+  }
+  formArea.innerHTML = `
+    <div class="card" style="border-left:4px solid var(--red)">
+      <div class="card-title"><div class="card-title-left">📤 Xuất hàng</div></div>
+      <div class="inv-info-grid">
+        <div><span class="inv-lbl">Mã:</span> <strong>${escapeHTML(it.code)}</strong></div>
+        <div><span class="inv-lbl">Tên:</span> <strong>${escapeHTML(it.name)}</strong></div>
+        <div><span class="inv-lbl">Tồn hiện tại:</span> <strong style="color:var(--accent2)">${it.stock} ${escapeHTML(it.unit||'')}</strong></div>
+      </div>
+      <div class="grid-2">
+        <div class="field">
+          <label>Số lượng xuất</label>
+          <input class="inp" id="inv-out-qty" type="number" min="0" max="${it.stock}" step="any" inputmode="decimal" placeholder="0">
+        </div>
+        <div class="field">
+          <label>Lý do / Ghi chú</label>
+          <input class="inp" id="inv-out-note" placeholder="VD: Dùng pha cafe / Hư / Trả NCC">
+        </div>
+      </div>
+      <div class="form-actions">
+        <button class="btn btn-outline" onclick="cancelInvForm()">Huỷ</button>
+        <button class="btn btn-red" onclick="submitInvOut('${escapeAttr(it.code)}', ${it.stock})">📤 Xác nhận xuất</button>
+      </div>
+    </div>
+  `;
+  setTimeout(() => document.getElementById('inv-out-qty')?.focus(), 100);
+}
+
+async function submitInvOut(code, currentStock) {
+  const qty = Number(document.getElementById('inv-out-qty').value||0);
+  const note = (document.getElementById('inv-out-note').value||'').trim();
+  if (!qty || qty <= 0) return toast('Số lượng phải > 0','err');
+  if (qty > currentStock) {
+    if (!confirm(`Xuất ${qty} lớn hơn tồn ${currentStock}. Tồn sẽ về âm. Tiếp tục?`)) return;
+  }
+  await sendInvAction({ action:'inv_out', code, qty, note, staff:myName() }, '✅ Đã xuất kho');
+}
+
+// ─── TỒN KHO ───
+function renderInvList() {
+  const items = [..._invCache.items].sort((a,b) => String(a.name||'').localeCompare(String(b.name||'')));
+  const totalValue = items.reduce((s,it) => s + (Number(it.stock||0) * Number(it.price||0)), 0);
+  document.getElementById('inv-content').innerHTML = `
+    <div class="card">
+      <div class="card-title">
+        <div class="card-title-left">📊 Tồn kho hiện tại</div>
+        <span class="tag tag-gold">${items.length} mặt hàng · Tổng giá trị: ${fmtMoney(totalValue)} ₫</span>
+      </div>
+      <input class="inp inp-sm" id="inv-search" placeholder="🔍 Tìm theo tên hoặc mã..." oninput="filterInvList()" style="margin-bottom:12px">
+      <div class="tbl-wrap">
+        <table id="inv-table">
+          <thead>
+            <tr>
+              <th>Mã</th><th>Tên hàng</th>
+              <th style="text-align:right">Tồn</th>
+              <th>ĐV</th>
+              <th style="text-align:right">Giá nhập</th>
+              <th style="text-align:right">Giá trị</th>
+              <th>Cập nhật cuối</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${items.length ? items.map(it => `
+              <tr data-name="${escapeAttr((it.name||'').toLowerCase())}" data-code="${escapeAttr((it.code||'').toLowerCase())}">
+                <td><strong>${escapeHTML(it.code)}</strong></td>
+                <td>${escapeHTML(it.name)}</td>
+                <td style="text-align:right;font-weight:600;color:${Number(it.stock||0) <= 0 ? 'var(--red)' : 'var(--accent2)'}">${it.stock||0}</td>
+                <td>${escapeHTML(it.unit||'')}</td>
+                <td style="text-align:right">${fmtMoney(it.price||0)}</td>
+                <td style="text-align:right;color:var(--text3)">${fmtMoney(Number(it.stock||0) * Number(it.price||0))}</td>
+                <td style="color:var(--text3);font-size:12px">${escapeHTML((it.updatedAt||'').slice(0,16).replace('T',' '))}</td>
+              </tr>
+            `).join('') : '<tr><td colspan="7" class="empty">Kho chưa có mặt hàng nào</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+}
+
+function filterInvList() {
+  const q = (document.getElementById('inv-search').value||'').trim().toLowerCase();
+  document.querySelectorAll('#inv-table tbody tr').forEach(tr => {
+    const name = tr.getAttribute('data-name')||'';
+    const code = tr.getAttribute('data-code')||'';
+    tr.style.display = (!q || name.includes(q) || code.includes(q)) ? '' : 'none';
+  });
+}
+
+// ─── LỊCH SỬ XUẤT/NHẬP ───
+function renderInvLog() {
+  const today = new Date().toISOString().slice(0,10);
+  const weekAgo = new Date(Date.now() - 6*86400000).toISOString().slice(0,10);
+  document.getElementById('inv-content').innerHTML = `
+    <div class="card">
+      <div class="card-title"><div class="card-title-left">📜 Lịch sử nhập / xuất kho</div></div>
+      <div class="filter-bar">
+        <div class="field" style="margin-bottom:0">
+          <label>Từ ngày</label>
+          <input type="date" class="inp inp-sm" id="invlog-from" value="${weekAgo}" onchange="renderInvLogTable()">
+        </div>
+        <div class="field" style="margin-bottom:0">
+          <label>Đến ngày</label>
+          <input type="date" class="inp inp-sm" id="invlog-to" value="${today}" onchange="renderInvLogTable()">
+        </div>
+        <select class="inp inp-sm" id="invlog-type" onchange="renderInvLogTable()" style="max-width:140px">
+          <option value="">Tất cả</option>
+          <option value="IN">📥 Nhập</option>
+          <option value="OUT">📤 Xuất</option>
+        </select>
+      </div>
+      <div id="invlog-table-wrap"></div>
+    </div>
+  `;
+  renderInvLogTable();
+}
+
+function renderInvLogTable() {
+  const from = document.getElementById('invlog-from')?.value || '';
+  const to   = document.getElementById('invlog-to')?.value || '';
+  const typeFilter = document.getElementById('invlog-type')?.value || '';
+
+  let logs = [..._invCache.logs];
+  if (from) logs = logs.filter(l => String(l.date||'') >= from);
+  if (to)   logs = logs.filter(l => String(l.date||'') <= to);
+  if (typeFilter) logs = logs.filter(l => l.type === typeFilter);
+  logs.sort((a,b) => String(b.timestamp||'').localeCompare(String(a.timestamp||'')));
+
+  const totalIn  = logs.filter(l => l.type==='IN').reduce((s,l)=>s+Number(l.qty||0),0);
+  const totalOut = logs.filter(l => l.type==='OUT').reduce((s,l)=>s+Number(l.qty||0),0);
+
+  document.getElementById('invlog-table-wrap').innerHTML = `
+    <div class="stats-grid" style="margin-bottom:12px">
+      <div class="stat"><div class="stat-label">📥 Nhập</div><div class="stat-val" style="color:var(--green)">${totalIn}</div><div class="stat-sub">${logs.filter(l=>l.type==='IN').length} lần</div></div>
+      <div class="stat"><div class="stat-label">📤 Xuất</div><div class="stat-val" style="color:var(--red)">${totalOut}</div><div class="stat-sub">${logs.filter(l=>l.type==='OUT').length} lần</div></div>
+      <div class="stat"><div class="stat-label">Tổng dòng</div><div class="stat-val">${logs.length}</div><div class="stat-sub">${from} → ${to}</div></div>
+    </div>
+    <div class="tbl-wrap">
+      <table>
+        <thead>
+          <tr><th>Thời gian</th><th>Loại</th><th>Mã</th><th>Tên</th><th style="text-align:right">SL</th><th>Ghi chú</th><th>NV</th></tr>
+        </thead>
+        <tbody>
+          ${logs.length ? logs.map(l => `
+            <tr>
+              <td style="color:var(--text3);font-size:12px">${escapeHTML(String(l.timestamp||'').slice(0,16).replace('T',' '))}</td>
+              <td><span class="tag ${l.type==='IN'?'tag-green':'tag-red'}">${l.type==='IN'?'📥 Nhập':'📤 Xuất'}</span></td>
+              <td><strong>${escapeHTML(l.code||'')}</strong></td>
+              <td>${escapeHTML(l.name||'')}</td>
+              <td style="text-align:right;font-weight:600;color:${l.type==='IN'?'var(--green)':'var(--red)'}">${l.type==='IN'?'+':'-'}${l.qty}</td>
+              <td style="color:var(--text3)">${escapeHTML(l.note||'')}</td>
+              <td style="color:var(--text3);font-size:12px">${escapeHTML(l.staff||'')}</td>
+            </tr>
+          `).join('') : '<tr><td colspan="7" class="empty">Chưa có giao dịch</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+// ─── GỬI ACTION LÊN SERVER ───
+async function sendInvAction(payload, successMsg) {
+  toast('Đang xử lý...','info');
+  try {
+    const res = await fetch('/api/sheet', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'Lỗi không xác định');
+    toast(successMsg, 'ok');
+    // Reload cache
+    _invCache.loaded = false;
+    await loadInventory(true);
+    cancelInvForm();
+  } catch(e) {
+    toast('❌ '+e.message, 'err');
+  }
+}
+
+// ═══════════ QUÉT MÃ VẠCH BẰNG CAMERA ═══════════
+async function openScanner(inputId, onDone) {
+  _qrActiveInputId = inputId;
+  // Mở modal (dùng modal-overlay pattern có sẵn)
+  document.getElementById('modal-wrap').innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this)closeScanner()">
+      <div class="modal" style="max-width:480px">
+        <div class="modal-title">
+          <span>📷 Quét mã vạch / QR</span>
+          <button class="modal-close" onclick="closeScanner()">✕</button>
+        </div>
+        <div id="qr-reader" style="width:100%;background:#000;border-radius:8px;overflow:hidden;min-height:280px"></div>
+        <div style="padding:12px 0 0;font-size:12px;color:var(--text3);text-align:center">
+          💡 Đưa mã vạch vào khung. Tự động dừng khi quét được.
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline" onclick="closeScanner()">Đóng</button>
+        </div>
+      </div>
+    </div>
+  `;
+  try {
+    await loadQrJs();
+    const config = { fps: 10, qrbox: { width: 250, height: 150 }, aspectRatio: 1.5 };
+    _qrScanner = new Html5Qrcode('qr-reader');
+    await _qrScanner.start(
+      { facingMode: 'environment' },  // camera sau
+      config,
+      (decoded) => {
+        // Quét được
+        const inp = document.getElementById(_qrActiveInputId);
+        if (inp) inp.value = String(decoded).trim();
+        closeScanner();
+        if (typeof onDone === 'function') setTimeout(onDone, 100);
+      },
+      () => { /* ignore errors per frame */ }
+    );
+  } catch(e) {
+    console.error('Scanner error:', e);
+    toast('❌ Không mở được camera: ' + (e.message||e), 'err');
+    closeScanner();
+  }
+}
+
+async function closeScanner() {
+  try {
+    if (_qrScanner) {
+      await _qrScanner.stop();
+      _qrScanner.clear();
+      _qrScanner = null;
+    }
+  } catch(e) {}
+  document.getElementById('modal-wrap').innerHTML = '';
+  _qrActiveInputId = null;
+}
+
+// Helper escape cho attribute (đề phòng tên/mã có dấu ')
+function escapeAttr(s) {
+  return String(s||'').replace(/'/g,"\\'").replace(/"/g,'&quot;');
 }
 </script>
 
