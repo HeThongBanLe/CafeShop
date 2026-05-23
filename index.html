@@ -294,6 +294,7 @@ tbody tr:hover td{background:rgba(255,255,255,.02)}
   .ph-title{font-size:19px}
 }
 .spinner{width:30px;height:30px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;margin:40px auto}
+.spinner-inline{display:inline-block;width:12px;height:12px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;animation:spin .8s linear infinite;vertical-align:-2px;margin-right:6px}
 @keyframes spin{to{transform:rotate(360deg)}}
 .empty{text-align:center;color:var(--text3);padding:32px;font-size:13px}
 .divider{height:1px;background:var(--border);margin:12px 0}
@@ -4021,6 +4022,23 @@ function renderInvLogTable() {
 
 // ─── GỬI ACTION LÊN SERVER ───
 async function sendInvAction(payload, successMsg) {
+  // ─── CHỐNG DOUBLE-CLICK ───
+  // Disable mọi nút submit (Nhập/Xuất/Lưu) trong form đang mở
+  // Match theo selector: nút có onclick chứa submitInvIn/submitInvOut/saveInv...
+  const allBtns = document.querySelectorAll(
+    '[onclick*="submitInvIn"], [onclick*="submitInvOut"], [onclick*="saveInv"], [onclick*="cancelInvForm"]'
+  );
+  const btnStates = [];
+  allBtns.forEach(b => {
+    btnStates.push({ el: b, html: b.innerHTML, disabled: b.disabled });
+    b.disabled = true;
+    if (b.classList.contains('btn-green') || b.classList.contains('btn-red') || b.classList.contains('btn-gold')) {
+      b.innerHTML = '<span class="spinner-inline"></span> Đang xử lý...';
+    }
+    b.style.opacity = '0.6';
+    b.style.cursor = 'not-allowed';
+  });
+
   toast('Đang xử lý...','info');
   try {
     const res = await fetch('/api/sheet', {
@@ -4037,6 +4055,15 @@ async function sendInvAction(payload, successMsg) {
     cancelInvForm();
   } catch(e) {
     toast('❌ '+e.message, 'err');
+    // CHỈ khôi phục button khi LỖI - vì nếu thành công form đã đóng rồi
+    btnStates.forEach(s => {
+      try {
+        s.el.disabled = s.disabled;
+        s.el.innerHTML = s.html;
+        s.el.style.opacity = '';
+        s.el.style.cursor = '';
+      } catch(err){}
+    });
   }
 }
 
