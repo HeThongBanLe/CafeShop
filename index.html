@@ -310,7 +310,12 @@ tbody tr:hover td{background:rgba(255,255,255,.02)}
 .inv-lbl{color:var(--text3);font-size:11px;display:inline-block;min-width:90px}
 .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .form-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:14px}
-@media (max-width:520px){.grid-2{grid-template-columns:1fr}}
+.inv-suggest-list{display:flex;flex-direction:column;gap:6px;max-height:380px;overflow-y:auto}
+.inv-suggest-card{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 12px;background:var(--surface);border:1px solid var(--border);border-radius:8px;cursor:pointer;transition:all .15s}
+.inv-suggest-card:hover{background:rgba(201,168,76,.08);border-color:var(--accent);transform:translateX(2px)}
+.inv-suggest-main{flex:1;min-width:0}
+.inv-suggest-stock{text-align:right;flex-shrink:0;padding-left:8px;border-left:1px solid var(--border);min-width:60px}
+@media (max-width:520px){.grid-2{grid-template-columns:1fr}.inv-suggest-card{padding:8px 10px}}
 </style>
 </head>
 <body>
@@ -3514,7 +3519,7 @@ function renderInvIn() {
     <div class="card">
       <div class="card-title"><div class="card-title-left">📥 Nhập kho</div></div>
       <div class="inv-scan-row">
-        <input class="inp" id="inv-in-code" placeholder="Gõ mã hoặc quét bằng camera..." autocomplete="off" onkeydown="if(event.key==='Enter')invInLookup()">
+        <input class="inp" id="inv-in-code" placeholder="Gõ mã, tên hàng hoặc quét camera..." autocomplete="off" onkeydown="if(event.key==='Enter')invInLookup()">
         <button class="btn btn-gold" onclick="openScanner('inv-in-code', invInLookup)">📷 Quét</button>
         <button class="btn btn-outline" onclick="invInLookup()">🔍 Tra</button>
       </div>
@@ -3529,10 +3534,9 @@ function renderInvIn() {
 
 function invInLookup() {
   const codeRaw = (document.getElementById('inv-in-code').value||'').trim();
-  const code = codeRaw.toUpperCase();
   const formArea = document.getElementById('inv-in-form');
 
-  if (!code) {
+  if (!codeRaw) {
     // Tự sinh mã mới
     const newCode = genNextCode();
     formArea.innerHTML = invInFormNew(newCode);
@@ -3540,15 +3544,125 @@ function invInLookup() {
     return;
   }
 
-  // Có mã trên DB chưa?
-  const existing = _invCache.items.find(it => (it.code||'').toUpperCase() === code);
-  if (existing) {
-    formArea.innerHTML = invInFormExisting(existing);
+  // 1) Thử exact match (CODE chính xác)
+  const code = codeRaw.toUpperCase();
+  const exact = _invCache.items.find(it => (it.code||'').toUpperCase() === code);
+  if (exact) {
+    formArea.innerHTML = invInFormExisting(exact);
     setTimeout(() => document.getElementById('inv-in-qty')?.focus(), 100);
-  } else {
-    formArea.innerHTML = invInFormNew(code);
-    setTimeout(() => document.getElementById('inv-in-name')?.focus(), 100);
+    return;
   }
+
+  // 2) Fuzzy match: gõ vài chữ -> show kết quả gần đúng
+  const matches = fuzzySearchInv(codeRaw, 8);
+  if (matches.length > 0) {
+    formArea.innerHTML = `
+      <div class="card" style="border-left:4px solid var(--accent2)">
+        <div class="card-title">
+          <div class="card-title-left">🔍 Có ${matches.length} kết quả gần đúng với "<strong>${escapeHTML(codeRaw)}</strong>"</div>
+        </div>
+        <div style="font-size:12px;color:var(--text3);margin-bottom:8px">Bấm để chọn, hoặc bấm "Tạo mới" nếu không có cái nào đúng:</div>
+        <div class="inv-suggest-list">
+          ${matches.map(it => `
+            <div class="inv-suggest-card" onclick="invInSelectExisting('${escapeAttr(it.code)}')">
+              <div class="inv-suggest-main">
+                <div><code style="font-size:12px;background:var(--bg3);padding:2px 6px;border-radius:4px">${escapeHTML(it.code)}</code></div>
+                <div style="font-size:15px;font-weight:600;margin-top:4px">${escapeHTML(it.name)}</div>
+                ${it.note ? `<div style="font-size:11px;color:var(--text3);margin-top:2px">${escapeHTML(it.note)}</div>` : ''}
+              </div>
+              <div class="inv-suggest-stock">
+                <div style="font-size:11px;color:var(--text3)">Tồn</div>
+                <div style="font-size:18px;font-weight:700;color:var(--accent2)">${it.stock}</div>
+                <div style="font-size:11px;color:var(--text3)">${escapeHTML(it.unit||'')}</div>
+              </div>
+            </div>
+          `).join('')}
+        </div>
+        <div style="margin-top:12px;text-align:center">
+          <button class="btn btn-outline btn-sm" onclick="invInCreateAsNew('${escapeAttr(codeRaw)}')">➕ Tạo mới với "${escapeHTML(codeRaw)}"</button>
+        </div>
+      </div>
+    `;
+    return;
+  }
+
+  // 3) Không có gì khớp -> form tạo mới
+  formArea.innerHTML = invInFormNew(codeRaw);
+  setTimeout(() => document.getElementById('inv-in-name')?.focus(), 100);
+}
+
+// Chọn 1 kết quả từ fuzzy search -> mở form nhập thêm
+function invInSelectExisting(code) {
+  const it = _invCache.items.find(x => (x.code||'') === code);
+  if (!it) return toast('Không tìm thấy','err');
+  // Update input để hiển thị đúng mã đã chọn
+  const inp = document.getElementById('inv-in-code');
+  if (inp) inp.value = it.code;
+  document.getElementById('inv-in-form').innerHTML = invInFormExisting(it);
+  setTimeout(() => document.getElementById('inv-in-qty')?.focus(), 100);
+}
+
+// Bấm "Tạo mới với code này" khi tao đoán mã chính xác là cái mới
+function invInCreateAsNew(codeRaw) {
+  const inp = document.getElementById('inv-in-code');
+  if (inp) inp.value = codeRaw;
+  // Nếu input không phải mã chuẩn (vd: gõ "cafe" mà ko phải code), thì sinh mã KH mới
+  const looksLikeCode = /^[A-Za-z0-9\-_]{3,}$/.test(codeRaw);
+  const useCode = looksLikeCode ? codeRaw : genNextCode();
+  document.getElementById('inv-in-form').innerHTML = invInFormNew(useCode);
+  setTimeout(() => {
+    document.getElementById('inv-in-name')?.focus();
+    if (!looksLikeCode) {
+      // Prefill tên = thứ user gõ
+      const nameInp = document.getElementById('inv-in-name');
+      if (nameInp && !nameInp.value) nameInp.value = codeRaw;
+    }
+  }, 100);
+}
+
+// Fuzzy search: chấm điểm theo độ khớp với code + name
+function fuzzySearchInv(query, maxResults) {
+  const q = String(query||'').toLowerCase().trim();
+  if (!q) return [];
+  const qNoAccent = removeAccents(q);
+  const scored = [];
+  _invCache.items.forEach(it => {
+    const code = String(it.code||'').toLowerCase();
+    const name = String(it.name||'').toLowerCase();
+    const nameNA = removeAccents(name);
+    let score = 0;
+    // Exact match thì khỏi cần (đã xử lý ở trên)
+    if (code === q)             score = 1000;
+    else if (code.startsWith(q)) score = 500;   // mã bắt đầu bằng query
+    else if (code.includes(q))   score = 300;   // mã chứa query
+    else if (name === q)         score = 250;   // tên trùng
+    else if (name.startsWith(q)) score = 200;
+    else if (nameNA.startsWith(qNoAccent)) score = 180;
+    else if (name.includes(q))   score = 100;
+    else if (nameNA.includes(qNoAccent)) score = 80;
+    // Match từng từ trong tên
+    else {
+      const words = nameNA.split(/\s+/);
+      const qWords = qNoAccent.split(/\s+/);
+      let allMatch = true;
+      qWords.forEach(qw => {
+        if (!qw) return;
+        if (!words.some(w => w.includes(qw))) allMatch = false;
+      });
+      if (allMatch && qWords.length) score = 50;
+    }
+    if (score > 0) scored.push({ it, score });
+  });
+  scored.sort((a, b) => b.score - a.score);
+  return scored.slice(0, maxResults || 8).map(x => x.it);
+}
+
+// Bỏ dấu tiếng Việt để search dễ
+function removeAccents(s) {
+  return String(s||'')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/đ/g, 'd').replace(/Đ/g, 'D');
 }
 
 function genNextCode() {
@@ -3673,7 +3787,7 @@ function renderInvOut() {
     <div class="card">
       <div class="card-title"><div class="card-title-left">📤 Xuất kho</div></div>
       <div class="inv-scan-row">
-        <input class="inp" id="inv-out-code" placeholder="Gõ mã hoặc quét..." autocomplete="off" onkeydown="if(event.key==='Enter')invOutLookup()">
+        <input class="inp" id="inv-out-code" placeholder="Gõ mã, tên hàng hoặc quét..." autocomplete="off" onkeydown="if(event.key==='Enter')invOutLookup()">
         <button class="btn btn-gold" onclick="openScanner('inv-out-code', invOutLookup)">📷 Quét</button>
         <button class="btn btn-outline" onclick="invOutLookup()">🔍 Tra</button>
       </div>
@@ -3684,15 +3798,68 @@ function renderInvOut() {
 }
 
 function invOutLookup() {
-  const code = ((document.getElementById('inv-out-code').value||'')+'').trim().toUpperCase();
+  const codeRaw = ((document.getElementById('inv-out-code').value||'')+'').trim();
   const formArea = document.getElementById('inv-out-form');
-  if (!code) return toast('Nhập mã trước','err');
+  if (!codeRaw) return toast('Nhập mã hoặc tên hàng','err');
 
-  const it = _invCache.items.find(x => (x.code||'').toUpperCase() === code);
-  if (!it) {
-    formArea.innerHTML = `<div class="empty" style="color:var(--red)">❌ Không tìm thấy mã <strong>${escapeHTML(code)}</strong> trong kho.<br>Hàng phải được nhập trước khi xuất.</div>`;
+  // 1) Exact match
+  const code = codeRaw.toUpperCase();
+  const exact = _invCache.items.find(x => (x.code||'').toUpperCase() === code);
+  if (exact) {
+    renderInvOutForm(exact);
     return;
   }
+
+  // 2) Fuzzy search
+  const matches = fuzzySearchInv(codeRaw, 8);
+  if (matches.length === 0) {
+    formArea.innerHTML = `<div class="empty" style="color:var(--red)">❌ Không tìm thấy hàng nào khớp với "<strong>${escapeHTML(codeRaw)}</strong>".<br>Hàng phải được nhập trước khi xuất.</div>`;
+    return;
+  }
+
+  // Nếu chỉ có 1 match thì chọn luôn
+  if (matches.length === 1) {
+    document.getElementById('inv-out-code').value = matches[0].code;
+    renderInvOutForm(matches[0]);
+    return;
+  }
+
+  // Nhiều match -> show list để chọn
+  formArea.innerHTML = `
+    <div class="card" style="border-left:4px solid var(--accent2)">
+      <div class="card-title">
+        <div class="card-title-left">🔍 Có ${matches.length} kết quả gần đúng với "<strong>${escapeHTML(codeRaw)}</strong>"</div>
+      </div>
+      <div style="font-size:12px;color:var(--text3);margin-bottom:8px">Bấm để chọn hàng cần xuất:</div>
+      <div class="inv-suggest-list">
+        ${matches.map(it => `
+          <div class="inv-suggest-card" onclick="invOutSelectExisting('${escapeAttr(it.code)}')">
+            <div class="inv-suggest-main">
+              <div><code style="font-size:12px;background:var(--bg3);padding:2px 6px;border-radius:4px">${escapeHTML(it.code)}</code></div>
+              <div style="font-size:15px;font-weight:600;margin-top:4px">${escapeHTML(it.name)}</div>
+              ${it.note ? `<div style="font-size:11px;color:var(--text3);margin-top:2px">${escapeHTML(it.note)}</div>` : ''}
+            </div>
+            <div class="inv-suggest-stock">
+              <div style="font-size:11px;color:var(--text3)">Tồn</div>
+              <div style="font-size:18px;font-weight:700;color:${Number(it.stock)<=0?'var(--red)':'var(--accent2)'}">${it.stock}</div>
+              <div style="font-size:11px;color:var(--text3)">${escapeHTML(it.unit||'')}</div>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function invOutSelectExisting(code) {
+  const it = _invCache.items.find(x => (x.code||'') === code);
+  if (!it) return toast('Không tìm thấy','err');
+  document.getElementById('inv-out-code').value = it.code;
+  renderInvOutForm(it);
+}
+
+function renderInvOutForm(it) {
+  const formArea = document.getElementById('inv-out-form');
   formArea.innerHTML = `
     <div class="card" style="border-left:4px solid var(--red)">
       <div class="card-title"><div class="card-title-left">📤 Xuất hàng</div></div>
@@ -3876,17 +4043,29 @@ async function sendInvAction(payload, successMsg) {
 // ═══════════ QUÉT MÃ VẠCH BẰNG CAMERA ═══════════
 async function openScanner(inputId, onDone) {
   _qrActiveInputId = inputId;
+  _qrOnDoneCallback = onDone;
   // Mở modal (dùng modal-overlay pattern có sẵn)
   document.getElementById('modal-wrap').innerHTML = `
     <div class="modal-overlay" onclick="if(event.target===this)closeScanner()">
-      <div class="modal" style="max-width:480px">
+      <div class="modal" style="max-width:520px">
         <div class="modal-title">
           <span>📷 Quét mã vạch / QR</span>
           <button class="modal-close" onclick="closeScanner()">✕</button>
         </div>
         <div id="qr-reader" style="width:100%;background:#000;border-radius:8px;overflow:hidden;min-height:280px"></div>
-        <div style="padding:12px 0 0;font-size:12px;color:var(--text3);text-align:center">
-          💡 Đưa mã vạch vào khung. Tự động dừng khi quét được.
+        <div id="qr-status" style="padding:10px 0 0;font-size:12px;color:var(--text3);text-align:center">
+          Đang khởi động camera...
+        </div>
+        <div style="display:flex;gap:8px;padding-top:10px;flex-wrap:wrap;justify-content:center">
+          <button class="btn btn-outline btn-sm" id="qr-flash-btn" onclick="toggleScannerFlash()" style="display:none">💡 Đèn</button>
+          <button class="btn btn-outline btn-sm" onclick="switchScannerCamera()">🔄 Đổi camera</button>
+        </div>
+        <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border);font-size:12px;color:var(--text3)">
+          💡 Mẹo: căn mã vạch vào giữa khung, để cách ~10–15cm. Quét không được? Gõ tay vào ô bên dưới:
+        </div>
+        <div style="display:flex;gap:6px;margin-top:8px">
+          <input class="inp" id="qr-manual" placeholder="Nhập mã/tên tay rồi Enter..." onkeydown="if(event.key==='Enter')scannerManualSubmit()" style="flex:1">
+          <button class="btn btn-gold btn-sm" onclick="scannerManualSubmit()">OK</button>
         </div>
         <div class="modal-footer">
           <button class="btn btn-outline" onclick="closeScanner()">Đóng</button>
@@ -3896,25 +4075,127 @@ async function openScanner(inputId, onDone) {
   `;
   try {
     await loadQrJs();
-    const config = { fps: 10, qrbox: { width: 250, height: 150 }, aspectRatio: 1.5 };
-    _qrScanner = new Html5Qrcode('qr-reader');
-    await _qrScanner.start(
-      { facingMode: 'environment' },  // camera sau
-      config,
-      (decoded) => {
-        // Quét được
-        const inp = document.getElementById(_qrActiveInputId);
-        if (inp) inp.value = String(decoded).trim();
-        closeScanner();
-        if (typeof onDone === 'function') setTimeout(onDone, 100);
-      },
-      () => { /* ignore errors per frame */ }
-    );
+    await startScannerWithFacing('environment');
   } catch(e) {
     console.error('Scanner error:', e);
-    toast('❌ Không mở được camera: ' + (e.message||e), 'err');
-    closeScanner();
+    const stat = document.getElementById('qr-status');
+    if (stat) stat.innerHTML = `<span style="color:var(--red)">❌ ${e.message||e}</span><br><span>Hãy gõ mã bằng tay vào ô dưới ↓</span>`;
+    setTimeout(() => document.getElementById('qr-manual')?.focus(), 200);
   }
+}
+
+let _qrCurrentFacing = 'environment';
+let _qrTrack = null;
+let _qrFlashOn = false;
+
+async function startScannerWithFacing(facing) {
+  _qrCurrentFacing = facing;
+  if (_qrScanner) {
+    try { await _qrScanner.stop(); } catch(e){}
+    try { _qrScanner.clear(); } catch(e){}
+    _qrScanner = null;
+  }
+  _qrScanner = new Html5Qrcode('qr-reader', {
+    // Bật detect cho TẤT CẢ format barcode + QR phổ biến
+    formatsToSupport: window.Html5QrcodeSupportedFormats ? [
+      Html5QrcodeSupportedFormats.QR_CODE,
+      Html5QrcodeSupportedFormats.EAN_13,
+      Html5QrcodeSupportedFormats.EAN_8,
+      Html5QrcodeSupportedFormats.CODE_128,
+      Html5QrcodeSupportedFormats.CODE_39,
+      Html5QrcodeSupportedFormats.CODE_93,
+      Html5QrcodeSupportedFormats.UPC_A,
+      Html5QrcodeSupportedFormats.UPC_E,
+      Html5QrcodeSupportedFormats.ITF,
+      Html5QrcodeSupportedFormats.CODABAR,
+      Html5QrcodeSupportedFormats.DATA_MATRIX,
+    ] : undefined,
+    verbose: false,
+  });
+
+  const config = {
+    fps: 15,
+    // Khung quét rộng hơn để dễ căn
+    qrbox: (w, h) => {
+      const minEdge = Math.min(w, h);
+      const boxW = Math.floor(minEdge * 0.85);
+      const boxH = Math.floor(boxW * 0.55);
+      return { width: boxW, height: boxH };
+    },
+    aspectRatio: 1.3,
+    // QUAN TRỌNG: cho phép thư viện thử cả ảnh đã FLIP để bắt mã in ngược
+    disableFlip: false,
+    // Dùng ZXing decoder (tốt hơn cho barcode 1D)
+    experimentalFeatures: {
+      useBarCodeDetectorIfSupported: true
+    }
+  };
+
+  await _qrScanner.start(
+    { facingMode: facing },
+    config,
+    (decoded) => {
+      const inp = document.getElementById(_qrActiveInputId);
+      if (inp) inp.value = String(decoded).trim();
+      const cb = _qrOnDoneCallback;
+      closeScanner();
+      if (typeof cb === 'function') setTimeout(cb, 100);
+    },
+    () => { /* mỗi frame fail thì kệ */ }
+  );
+
+  // Lấy reference đến track để bật/tắt flash + zoom
+  try {
+    const videoEl = document.querySelector('#qr-reader video');
+    if (videoEl && videoEl.srcObject) {
+      _qrTrack = videoEl.srcObject.getVideoTracks()[0];
+      // Kiểm tra có support flash không
+      const caps = _qrTrack.getCapabilities ? _qrTrack.getCapabilities() : {};
+      if (caps.torch) {
+        const fb = document.getElementById('qr-flash-btn');
+        if (fb) fb.style.display = '';
+      }
+    }
+  } catch(e) { console.warn('track caps:', e); }
+
+  const stat = document.getElementById('qr-status');
+  if (stat) stat.textContent = '📷 Đưa mã vào khung — quét tự động';
+}
+
+async function switchScannerCamera() {
+  const next = (_qrCurrentFacing === 'environment') ? 'user' : 'environment';
+  try {
+    await startScannerWithFacing(next);
+    toast('Đã đổi camera ' + (next==='environment'?'sau':'trước'), 'info');
+  } catch(e) {
+    toast('Không đổi được camera: ' + e.message, 'err');
+  }
+}
+
+async function toggleScannerFlash() {
+  if (!_qrTrack) return;
+  try {
+    _qrFlashOn = !_qrFlashOn;
+    await _qrTrack.applyConstraints({ advanced: [{ torch: _qrFlashOn }] });
+    const btn = document.getElementById('qr-flash-btn');
+    if (btn) btn.textContent = _qrFlashOn ? '💡 Tắt đèn' : '💡 Bật đèn';
+  } catch(e) {
+    toast('Không bật được đèn: ' + e.message, 'err');
+  }
+}
+
+// Lưu callback để khi user gõ tay xong vẫn trigger được onDone
+let _qrOnDoneCallback = null;
+function _setQrOnDone(cb) { _qrOnDoneCallback = cb; }
+
+function scannerManualSubmit() {
+  const v = (document.getElementById('qr-manual')?.value || '').trim();
+  if (!v) return toast('Nhập mã trước','err');
+  const inp = document.getElementById(_qrActiveInputId);
+  if (inp) inp.value = v;
+  const cb = _qrOnDoneCallback;
+  closeScanner();
+  if (typeof cb === 'function') setTimeout(cb, 100);
 }
 
 async function closeScanner() {
@@ -3925,8 +4206,11 @@ async function closeScanner() {
       _qrScanner = null;
     }
   } catch(e) {}
+  _qrTrack = null;
+  _qrFlashOn = false;
   document.getElementById('modal-wrap').innerHTML = '';
   _qrActiveInputId = null;
+  _qrOnDoneCallback = null;
 }
 
 // Helper escape cho attribute (đề phòng tên/mã có dấu ')
