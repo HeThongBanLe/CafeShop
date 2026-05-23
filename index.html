@@ -4428,7 +4428,10 @@ function renderInvLog() {
   const weekAgo = new Date(Date.now() - 6*86400000).toISOString().slice(0,10);
   document.getElementById('inv-content').innerHTML = `
     <div class="card">
-      <div class="card-title"><div class="card-title-left">📜 Lịch sử nhập / xuất kho</div></div>
+      <div class="card-title">
+        <div class="card-title-left">📜 Lịch sử nhập / xuất kho</div>
+        ${isAdmin ? `<button class="btn btn-red btn-xs" onclick="confirmDeleteInvLogs()" title="Xoá log theo bộ lọc đang chọn">🗑 Xoá log</button>` : ''}
+      </div>
       <div class="filter-bar">
         <div class="field" style="margin-bottom:0">
           <label>Từ ngày</label>
@@ -4522,6 +4525,116 @@ function renderInvLogTable() {
       ${logs.length > 0 ? '💡 Cuộn ngang ➡️ để xem hết các cột nếu màn hình hẹp' : ''}
     </div>
   `;
+}
+
+// ─── XOÁ LOG THEO BỘ LỌC ĐANG CHỌN ───
+function confirmDeleteInvLogs() {
+  if (!isAdmin) return toast('Chỉ admin mới xoá log','err');
+
+  const from = document.getElementById('invlog-from')?.value || '';
+  const to   = document.getElementById('invlog-to')?.value || '';
+  const typeFilter = document.getElementById('invlog-type')?.value || '';
+
+  // Tính trước số dòng sẽ bị xoá (cho user biết)
+  let logs = [..._invCache.logs];
+  if (from) logs = logs.filter(l => String(l.date||'') >= from);
+  if (to)   logs = logs.filter(l => String(l.date||'') <= to);
+  if (typeFilter) logs = logs.filter(l => l.type === typeFilter);
+  const count = logs.length;
+
+  if (count === 0) return toast('Không có log nào khớp bộ lọc để xoá','info');
+
+  // Mô tả bộ lọc cho user thấy rõ
+  const typeLabel = {
+    '': 'Tất cả loại',
+    'IN': '📥 Nhập',
+    'OUT': '📤 Xuất',
+    'LIMIT': '⚠️ Đổi ngưỡng',
+    'EDIT': '✏️ Sửa thông tin',
+    'DELETE': '🗑 Xoá mặt hàng',
+  }[typeFilter] || typeFilter;
+
+  document.getElementById('modal-wrap').innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this)closeLimitModal()">
+      <div class="modal" style="max-width:480px">
+        <div class="modal-title">
+          <span>🗑 Xoá log theo bộ lọc</span>
+          <button class="modal-close" onclick="closeLimitModal()">✕</button>
+        </div>
+        <div style="padding:8px 0">
+          <div style="font-size:14px;margin-bottom:12px">Xác nhận xoá <strong style="color:var(--red);font-size:18px">${count}</strong> dòng log đang hiện?</div>
+          <div class="inv-info-grid">
+            <div><span class="inv-lbl">Từ ngày:</span> <strong>${from || '(không giới hạn)'}</strong></div>
+            <div><span class="inv-lbl">Đến ngày:</span> <strong>${to || '(không giới hạn)'}</strong></div>
+            <div><span class="inv-lbl">Loại:</span> <strong>${escapeHTML(typeLabel)}</strong></div>
+            <div><span class="inv-lbl">Số dòng xoá:</span> <strong style="color:var(--red)">${count}</strong></div>
+          </div>
+          <div style="background:rgba(220,53,69,.12);border:1px solid rgba(220,53,69,.4);padding:10px 12px;border-radius:8px;margin:14px 0;font-size:13px;color:#ff6b7a">
+            ⚠️ <strong>Hành động này KHÔNG THỂ HOÀN TÁC</strong><br>
+            Log đã xoá sẽ mất vĩnh viễn. Tồn kho hiện tại KHÔNG bị ảnh hưởng.
+          </div>
+          <div class="field">
+            <label>Gõ "<strong>XOA</strong>" để xác nhận:</label>
+            <input class="inp" id="del-log-confirm" placeholder="XOA" autocomplete="off"
+                   onkeydown="if(event.key==='Enter')doDeleteInvLogs()">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline" onclick="closeLimitModal()">Huỷ</button>
+          <button class="btn btn-red" onclick="doDeleteInvLogs()">🗑 Xoá ${count} dòng</button>
+        </div>
+      </div>
+    </div>
+  `;
+  setTimeout(() => document.getElementById('del-log-confirm')?.focus(), 80);
+}
+
+async function doDeleteInvLogs() {
+  const confirmText = (document.getElementById('del-log-confirm')?.value||'').trim().toUpperCase();
+  if (confirmText !== 'XOA') return toast('Gõ "XOA" để xác nhận','err');
+
+  const from = document.getElementById('invlog-from')?.value || '';
+  const to   = document.getElementById('invlog-to')?.value || '';
+  const typeFilter = document.getElementById('invlog-type')?.value || '';
+
+  // Disable nút
+  const btns = document.querySelectorAll('.modal [onclick*="doDeleteInvLogs"], .modal [onclick*="closeLimitModal"]');
+  const states = [];
+  btns.forEach(b => {
+    states.push({ el: b, html: b.innerHTML, disabled: b.disabled });
+    b.disabled = true;
+    if (b.classList.contains('btn-red')) {
+      b.innerHTML = '<span class="spinner-inline"></span> Đang xoá...';
+    }
+    b.style.opacity = '0.6';
+  });
+
+  try {
+    const res = await fetch('/api/sheet', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        action:'inv_log_delete',
+        fromDate: from, toDate: to, type: typeFilter,
+        staff: myName()
+      })
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'Lỗi không xác định');
+    toast(`✅ Đã xoá ${data.deleted||0} dòng log`, 'ok');
+    closeLimitModal();
+    _invCache.loaded = false;
+    await loadInventory(true);
+  } catch(e) {
+    toast('❌ '+e.message, 'err');
+    states.forEach(s => {
+      try {
+        s.el.disabled = s.disabled;
+        s.el.innerHTML = s.html;
+        s.el.style.opacity = '';
+      } catch(err){}
+    });
+  }
 }
 
 // ─── GỬI ACTION LÊN SERVER ───
