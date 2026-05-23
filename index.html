@@ -2668,14 +2668,16 @@ function printReceipt(tableNum, ord, mergedIn, total) {
     ? `(Da gop: ${[...new Set(ord.mergeLog.map(l=>l.fromTableNum).filter(Boolean))].map(n=>'Ban '+n).join(', ')})`
     : '';
 
-  const css = `@page{size:80mm auto;margin:0}
-*{margin:0;padding:0;box-sizing:border-box}
+  // CSS bên TRONG iframe - LƯU Ý: KHÔNG ép @page size 80mm
+  // để máy in A4 trên laptop cũng in được (chỉ ép khi user chọn máy in nhiệt)
+  const css = `*{margin:0;padding:0;box-sizing:border-box}
 html,body{width:80mm;background:#fff;color:#000;font-family:'Courier New',monospace;font-size:12px;line-height:1.35}
 body{padding:3mm 2mm}.c{text-align:center}.b{font-weight:bold}.big{font-size:14px}.lg{font-size:16px}
 hr{border:none;border-top:1px dashed #000;margin:4px 0}
 .row{display:flex;justify-content:space-between;gap:6px;margin:2px 0}
 .row .l{flex:1;word-break:break-word}.row .r{white-space:nowrap}
-.foot{text-align:center;margin-top:6px;font-style:italic}.note{font-size:10px}`;
+.foot{text-align:center;margin-top:6px;font-style:italic}.note{font-size:10px}
+@media print { @page { size: 80mm auto; margin: 0 } body { width: 80mm } }`;
 
   const body = `
 <div class="c b lg">${escapeHTML(shop.name||'CafeShop')}</div>
@@ -2696,68 +2698,39 @@ ${merged.map(it=>`<div class="row">
 <hr>
 <div class="foot">${escapeHTML(shop.footer||'Cam on quy khach!')}<br>Hen gap lai!</div>`;
 
-  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>${css}</style></head><body>${body}</body></html>`;
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Hoa don</title><style>${css}</style></head><body>${body}</body></html>`;
 
   // Chống double-click
   if (window._isPrinting) return;
   window._isPrinting = true;
 
-  // ─── CHÈN CSS @media print VÀO TRANG CHA ───
-  // Khi user bấm In, trình duyệt sẽ ẨN trang chính và CHỈ HIỆN iframe in
-  // Đây là cách hoạt động ổn định trên cả mobile + desktop (Chrome, Firefox, Safari, Edge)
-  let printStyleEl = document.getElementById('print-iframe-style');
-  if (!printStyleEl) {
-    printStyleEl = document.createElement('style');
-    printStyleEl.id = 'print-iframe-style';
-    printStyleEl.textContent = `
-      @media print {
-        /* Khi in: giấu hết trang chính */
-        body > *:not(#print-frame) { display: none !important; }
-        /* CHỈ HIỆN iframe in, đưa về vị trí (0,0) */
-        #print-frame {
-          display: block !important;
-          visibility: visible !important;
-          position: absolute !important;
-          left: 0 !important;
-          top: 0 !important;
-          right: auto !important;
-          bottom: auto !important;
-          width: 100% !important;
-          height: auto !important;
-          min-height: 0 !important;
-          border: 0 !important;
-          margin: 0 !important;
-          padding: 0 !important;
-        }
-        html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; }
-        @page { size: 80mm auto; margin: 0; }
-      }
-    `;
-    document.head.appendChild(printStyleEl);
-  }
-
-  // Xoá iframe cũ (nếu có)
+  // Xoá iframe cũ
   let frame = document.getElementById('print-frame');
   if (frame) frame.remove();
 
-  // Tạo iframe mới — KHÔNG dùng visibility:hidden vì khi in @media print
-  // cần thấy được nó. Thay vào đó, ẩn bằng position off-screen lúc bình thường.
+  // Tạo iframe mới
+  // KEY FIX: KHÔNG dùng visibility:hidden vì Chrome desktop sẽ coi như rỗng khi in.
+  // Thay vào đó dùng opacity:0 + pointer-events:none + size nhỏ.
+  // iframe vẫn được render bình thường, chỉ là user không thấy.
   frame = document.createElement('iframe');
   frame.id = 'print-frame';
-  // Lúc thường (không in): nhét sang lề phải ngoài viewport để user không thấy
-  // Khi in: @media print sẽ override position về 0,0
-  frame.style.cssText = 'position:fixed;right:-9999px;top:0;width:80mm;height:1px;border:0;background:#fff';
+  frame.setAttribute('aria-hidden', 'true');
+  frame.style.cssText = 'position:fixed;left:0;top:0;width:80mm;height:1px;border:0;opacity:0;pointer-events:none;z-index:-1';
+  document.body.appendChild(frame);
 
-  // Chỉ in MỘT lần (dù onload + fallback đều fire)
   let printed = false;
   const triggerPrint = () => {
     if (printed) return;
     printed = true;
     try {
-      // QUAN TRỌNG: gọi print() trên window CHA, không phải iframe.contentWindow
-      // Vì @media print đã setup để hide-all-show-iframe
-      window.focus();
-      window.print();
+      // Print iframe — cách này hoạt động trên cả mobile + desktop nếu iframe có nội dung
+      // Quan trọng: contentWindow phải tồn tại + có document.body
+      const cw = frame.contentWindow;
+      if (!cw || !cw.document || !cw.document.body) {
+        throw new Error('iframe chưa load xong');
+      }
+      cw.focus();
+      cw.print();
     } catch(e) {
       console.error('print error:', e);
       toast('Lỗi in: ' + (e.message||e), 'err');
@@ -2766,16 +2739,26 @@ ${merged.map(it=>`<div class="row">
     setTimeout(() => {
       try { frame.remove(); } catch(e){}
       window._isPrinting = false;
-    }, 2000);
+    }, 3000);
   };
 
-  // Đợi iframe LOAD XONG thật sự rồi mới in
+  // Cách load nội dung: document.write trực tiếp (ổn định hơn srcdoc trên Safari iOS)
   frame.onload = triggerPrint;
-  // Fallback an toàn: nếu sau 1.5s onload chưa fire
+
+  // Fallback nếu onload không fire trong 1.5s
   setTimeout(triggerPrint, 1500);
 
-  document.body.appendChild(frame);
-  frame.srcdoc = html;
+  // Ghi nội dung vào iframe document
+  try {
+    const doc = frame.contentDocument || frame.contentWindow.document;
+    doc.open();
+    doc.write(html);
+    doc.close();
+  } catch(e) {
+    console.error('write iframe error:', e);
+    toast('Lỗi tạo hoá đơn: ' + (e.message||e), 'err');
+    window._isPrinting = false;
+  }
 }
 
 function escapeHTML(s) {
