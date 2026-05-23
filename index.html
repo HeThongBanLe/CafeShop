@@ -4057,7 +4057,7 @@ function renderInvList() {
         <input class="inp inp-sm" id="inv-search" placeholder="🔍 Tìm theo tên hoặc mã..." oninput="filterInvList()" style="flex:1;min-width:200px">
         <select class="inp inp-sm" id="inv-filter-status" onchange="filterInvList()" style="max-width:180px">
           <option value="all">Tất cả</option>
-          <option value="alert" ${(outCount+lowCount)>0?'selected':''}>⚠️ Chỉ hàng cảnh báo</option>
+          <option value="alert">⚠️ Chỉ hàng cảnh báo</option>
           <option value="out">❌ Đã hết</option>
           <option value="low">⚠️ Sắp hết</option>
           <option value="ok">✅ Đủ tồn</option>
@@ -4438,10 +4438,13 @@ function renderInvLog() {
           <label>Đến ngày</label>
           <input type="date" class="inp inp-sm" id="invlog-to" value="${today}" onchange="renderInvLogTable()">
         </div>
-        <select class="inp inp-sm" id="invlog-type" onchange="renderInvLogTable()" style="max-width:140px">
+        <select class="inp inp-sm" id="invlog-type" onchange="renderInvLogTable()" style="max-width:160px">
           <option value="">Tất cả</option>
           <option value="IN">📥 Nhập</option>
           <option value="OUT">📤 Xuất</option>
+          <option value="LIMIT">⚠️ Đổi ngưỡng</option>
+          <option value="EDIT">✏️ Sửa thông tin</option>
+          <option value="DELETE">🗑 Xoá mặt hàng</option>
         </select>
       </div>
       <div id="invlog-table-wrap"></div>
@@ -4463,11 +4466,13 @@ function renderInvLogTable() {
 
   const totalIn  = logs.filter(l => l.type==='IN').reduce((s,l)=>s+Number(l.qty||0),0);
   const totalOut = logs.filter(l => l.type==='OUT').reduce((s,l)=>s+Number(l.qty||0),0);
+  const adminActions = logs.filter(l => ['LIMIT','EDIT','DELETE'].includes(l.type)).length;
 
   document.getElementById('invlog-table-wrap').innerHTML = `
     <div class="stats-grid" style="margin-bottom:12px">
       <div class="stat"><div class="stat-label">📥 Nhập</div><div class="stat-val" style="color:var(--green)">${totalIn}</div><div class="stat-sub">${logs.filter(l=>l.type==='IN').length} lần</div></div>
       <div class="stat"><div class="stat-label">📤 Xuất</div><div class="stat-val" style="color:var(--red)">${totalOut}</div><div class="stat-sub">${logs.filter(l=>l.type==='OUT').length} lần</div></div>
+      <div class="stat"><div class="stat-label">⚙️ Thao tác khác</div><div class="stat-val" style="color:var(--accent2)">${adminActions}</div><div class="stat-sub">Sửa / Xoá / Đổi ngưỡng</div></div>
       <div class="stat"><div class="stat-label">Tổng dòng</div><div class="stat-val">${logs.length}</div><div class="stat-sub">${from} → ${to}</div></div>
     </div>
     <div class="tbl-wrap">
@@ -4476,17 +4481,40 @@ function renderInvLogTable() {
           <tr><th>Thời gian</th><th>Loại</th><th>Mã</th><th>Tên</th><th style="text-align:right">SL</th><th>Ghi chú</th><th>NV</th></tr>
         </thead>
         <tbody>
-          ${logs.length ? logs.map(l => `
+          ${logs.length ? logs.map(l => {
+            const t = l.type || '';
+            // Map mỗi loại sang badge + màu QTY
+            let badge, qtyColor, qtyPrefix, qtyText;
+            if (t === 'IN') {
+              badge = '<span class="tag tag-green">📥 Nhập</span>';
+              qtyColor = 'var(--green)'; qtyPrefix = '+'; qtyText = l.qty;
+            } else if (t === 'OUT') {
+              badge = '<span class="tag tag-red">📤 Xuất</span>';
+              qtyColor = 'var(--red)'; qtyPrefix = '-'; qtyText = l.qty;
+            } else if (t === 'LIMIT') {
+              badge = '<span class="tag tag-gold">⚠️ Đổi ngưỡng</span>';
+              qtyColor = 'var(--accent2)'; qtyPrefix = ''; qtyText = '→ ' + l.qty;
+            } else if (t === 'EDIT') {
+              badge = '<span class="tag tag-blue">✏️ Sửa</span>';
+              qtyColor = 'var(--text3)'; qtyPrefix = ''; qtyText = '—';
+            } else if (t === 'DELETE') {
+              badge = '<span class="tag tag-red">🗑 Xoá</span>';
+              qtyColor = 'var(--text3)'; qtyPrefix = ''; qtyText = l.qty || '—';
+            } else {
+              badge = '<span class="tag tag-gold">⚙️ ' + escapeHTML(t) + '</span>';
+              qtyColor = 'var(--accent2)'; qtyPrefix = ''; qtyText = l.qty || '—';
+            }
+            return `
             <tr>
               <td style="color:var(--text3);font-size:12px">${escapeHTML(String(l.timestamp||'').slice(0,16).replace('T',' '))}</td>
-              <td><span class="tag ${l.type==='IN'?'tag-green':l.type==='OUT'?'tag-red':'tag-gold'}">${l.type==='IN'?'📥 Nhập':l.type==='OUT'?'📤 Xuất':'⚙️ '+escapeHTML(l.type)}</span></td>
+              <td>${badge}</td>
               <td><strong>${escapeHTML(l.code||'')}</strong></td>
               <td class="wrap">${escapeHTML(l.name||'')}</td>
-              <td style="text-align:right;font-weight:600;color:${l.type==='IN'?'var(--green)':l.type==='OUT'?'var(--red)':'var(--accent2)'}">${l.type==='IN'?'+':l.type==='OUT'?'-':''}${l.qty}</td>
+              <td style="text-align:right;font-weight:600;color:${qtyColor}">${qtyPrefix}${qtyText}</td>
               <td class="wrap" style="color:var(--text3)">${escapeHTML(l.note||'')}</td>
               <td style="color:var(--text3);font-size:12px">${escapeHTML(l.staff||'')}</td>
-            </tr>
-          `).join('') : '<tr><td colspan="7" class="empty">Chưa có giao dịch</td></tr>'}
+            </tr>`;
+          }).join('') : '<tr><td colspan="7" class="empty">Chưa có giao dịch</td></tr>'}
         </tbody>
       </table>
     </div>
