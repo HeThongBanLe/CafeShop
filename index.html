@@ -317,7 +317,6 @@ tbody tr:hover td{background:rgba(255,255,255,.02)}
 .rev-tab{background:transparent;border:0;color:var(--text3);font-size:12px;font-weight:500;padding:5px 12px;border-radius:6px;cursor:pointer;transition:all .15s;font-family:inherit}
 .rev-tab:hover{color:var(--text2)}
 .rev-tab.active{background:var(--accent);color:#1a1612;font-weight:600}
-.rev-range{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;background:var(--bg2);border:1px solid var(--border);border-radius:8px;padding:10px;margin-top:8px}
 @keyframes spin{to{transform:rotate(360deg)}}
 .empty{text-align:center;color:var(--text3);padding:32px;font-size:13px}
 .divider{height:1px;background:var(--border);margin:12px 0}
@@ -3223,41 +3222,7 @@ function renderDataAnalysis() {
         </div>
       </div>
 
-      <!-- Khoảng chọn theo từng mode -->
-      <div id="rev-range-day" class="rev-range">
-        <div class="field" style="margin:0;flex:1;min-width:140px">
-          <label>Từ ngày</label>
-          <input type="date" class="inp inp-sm" id="rev-day-from" onchange="renderRevSection()">
-        </div>
-        <div class="field" style="margin:0;flex:1;min-width:140px">
-          <label>Đến ngày</label>
-          <input type="date" class="inp inp-sm" id="rev-day-to" onchange="renderRevSection()">
-        </div>
-      </div>
-
-      <div id="rev-range-month" class="rev-range" style="display:none">
-        <div class="field" style="margin:0;flex:1;min-width:140px">
-          <label>Từ tháng</label>
-          <input type="month" class="inp inp-sm" id="rev-month-from" onchange="renderRevSection()">
-        </div>
-        <div class="field" style="margin:0;flex:1;min-width:140px">
-          <label>Đến tháng</label>
-          <input type="month" class="inp inp-sm" id="rev-month-to" onchange="renderRevSection()">
-        </div>
-      </div>
-
-      <div id="rev-range-year" class="rev-range" style="display:none">
-        <div class="field" style="margin:0;flex:1;min-width:140px">
-          <label>Từ năm</label>
-          <input type="number" class="inp inp-sm" id="rev-year-from" min="2020" max="2100" onchange="renderRevSection()">
-        </div>
-        <div class="field" style="margin:0;flex:1;min-width:140px">
-          <label>Đến năm</label>
-          <input type="number" class="inp inp-sm" id="rev-year-to" min="2020" max="2100" onchange="renderRevSection()">
-        </div>
-      </div>
-
-      <div id="rev-summary" style="font-size:13px;color:var(--text3);margin:8px 0 12px;text-align:center"></div>
+      <div id="rev-summary" style="font-size:13px;color:var(--text3);margin:0 0 12px;text-align:center"></div>
 
       <div style="position:relative;height:320px">
         <canvas id="chart-revenue"></canvas>
@@ -3347,7 +3312,6 @@ function renderDataAnalysis() {
   `;
 
   // Vẽ biểu đồ doanh thu theo ngày
-  _initRevRangeDefaults(_revMode);
   renderRevSection();
   // Vẽ trend tất cả món
   renderTrendAll(topItems);
@@ -3363,34 +3327,7 @@ function setRevMode(mode) {
   document.querySelectorAll('.rev-tab').forEach(b => {
     b.classList.toggle('active', b.getAttribute('data-mode') === mode);
   });
-  // Show đúng khu vực chọn khoảng theo mode
-  document.getElementById('rev-range-day').style.display   = mode === 'day'   ? 'flex' : 'none';
-  document.getElementById('rev-range-month').style.display = mode === 'month' ? 'flex' : 'none';
-  document.getElementById('rev-range-year').style.display  = mode === 'year'  ? 'flex' : 'none';
-  // Init giá trị mặc định lần đầu chuyển sang mode đó
-  _initRevRangeDefaults(mode);
   renderRevSection();
-}
-
-// Set giá trị mặc định cho từng mode dựa trên _dataCache.from / _dataCache.to
-function _initRevRangeDefaults(mode) {
-  if (!_dataCache) return;
-  if (mode === 'day') {
-    const f = document.getElementById('rev-day-from');
-    const t = document.getElementById('rev-day-to');
-    if (!f.value) f.value = _dataCache.from || '';
-    if (!t.value) t.value = _dataCache.to   || '';
-  } else if (mode === 'month') {
-    const f = document.getElementById('rev-month-from');
-    const t = document.getElementById('rev-month-to');
-    if (!f.value) f.value = (_dataCache.from||'').slice(0,7);
-    if (!t.value) t.value = (_dataCache.to||'').slice(0,7);
-  } else {
-    const f = document.getElementById('rev-year-from');
-    const t = document.getElementById('rev-year-to');
-    if (!f.value) f.value = (_dataCache.from||'').slice(0,4);
-    if (!t.value) t.value = (_dataCache.to||'').slice(0,4);
-  }
 }
 
 // Gom rows -> Map key (YYYY-MM-DD / YYYY-MM / YYYY) -> revenue
@@ -3408,23 +3345,21 @@ function _aggregateRevenue(rows, mode) {
   return map;
 }
 
-// Tạo dãy key liền mạch theo mode
-function _genKeyRange(fromKey, toKey, mode) {
+// Tạo dãy key liền mạch theo mode từ from-to (YYYY-MM-DD)
+function _genKeyRange(fromDate, toDate, mode) {
   const keys = [];
-  if (!fromKey || !toKey) return keys;
-  if (fromKey > toKey) return keys;
+  if (!fromDate || !toDate) return keys;
   if (mode === 'day') {
-    let cur = new Date(fromKey);
-    const end = new Date(toKey);
+    let cur = new Date(fromDate);
+    const end = new Date(toDate);
     while (cur <= end) {
       keys.push(cur.toISOString().slice(0,10));
       cur.setDate(cur.getDate()+1);
       if (keys.length > 1000) break;
     }
   } else if (mode === 'month') {
-    // fromKey/toKey dạng YYYY-MM
-    let [fy, fm] = fromKey.split('-').map(Number);
-    const [ty, tm] = toKey.split('-').map(Number);
+    let [fy, fm] = fromDate.slice(0,7).split('-').map(Number);
+    const [ty, tm] = toDate.slice(0,7).split('-').map(Number);
     while (fy < ty || (fy === ty && fm <= tm)) {
       keys.push(String(fy) + '-' + String(fm).padStart(2,'0'));
       fm++;
@@ -3432,8 +3367,8 @@ function _genKeyRange(fromKey, toKey, mode) {
       if (keys.length > 240) break;
     }
   } else {
-    const fy = parseInt(fromKey, 10);
-    const ty = parseInt(toKey, 10);
+    const fy = parseInt(fromDate.slice(0,4), 10);
+    const ty = parseInt(toDate.slice(0,4), 10);
     for (let y = fy; y <= ty; y++) {
       keys.push(String(y));
       if (keys.length > 50) break;
@@ -3459,30 +3394,18 @@ function _modeLabel(mode) {
 function renderRevSection() {
   if (!_dataCache || !_dataCache.rows) return;
   const rows = _dataCache.rows;
-
-  // Lấy from/to theo mode hiện tại
-  let fromKey, toKey;
-  if (_revMode === 'day') {
-    fromKey = document.getElementById('rev-day-from').value;
-    toKey   = document.getElementById('rev-day-to').value;
-  } else if (_revMode === 'month') {
-    fromKey = document.getElementById('rev-month-from').value;
-    toKey   = document.getElementById('rev-month-to').value;
-  } else {
-    fromKey = document.getElementById('rev-year-from').value;
-    toKey   = document.getElementById('rev-year-to').value;
-  }
+  const fromDate = _dataCache.from;
+  const toDate   = _dataCache.to;
 
   const sumEl = document.getElementById('rev-summary');
-  if (!fromKey || !toKey) {
-    if (sumEl) sumEl.innerHTML = '<span style="color:var(--text3)">⚠️ Chọn khoảng để xem biểu đồ</span>';
+  if (!fromDate || !toDate) {
+    if (sumEl) sumEl.innerHTML = '<span style="color:var(--text3)">⚠️ Chọn khoảng và bấm "Tải dữ liệu"</span>';
     drawRevChart([], []);
     return;
   }
 
-  // Gom rồi tạo labels + values
   const map = _aggregateRevenue(rows, _revMode);
-  const keys = _genKeyRange(fromKey, toKey, _revMode);
+  const keys = _genKeyRange(fromDate, toDate, _revMode);
   const labels = keys.map(k => _fmtKeyShort(k, _revMode));
   const values = keys.map(k => map[k] || 0);
   const total = values.reduce((s,v) => s+v, 0);
