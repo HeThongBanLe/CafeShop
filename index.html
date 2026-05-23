@@ -323,6 +323,8 @@ tbody tr:hover td{background:rgba(255,255,255,.02)}
 .inv-pill{display:inline-flex;align-items:center;padding:6px 12px;border-radius:8px;font-size:12px;font-weight:600}
 .inv-pill-red{background:rgba(220,53,69,.15);color:#ff6b7a;border:1px solid rgba(220,53,69,.4)}
 .inv-pill-orange{background:rgba(255,159,28,.15);color:#ff9f1c;border:1px solid rgba(255,159,28,.4)}
+.inv-limit-btn{background:transparent;border:1px dashed transparent;color:var(--text2);font-family:inherit;font-size:13px;padding:4px 10px;border-radius:6px;cursor:pointer;transition:all .15s;min-width:50px}
+.inv-limit-btn:hover{border-color:var(--accent);background:rgba(201,168,76,.08);color:var(--accent2)}
 @media (max-width:520px){.grid-2{grid-template-columns:1fr}.inv-suggest-card{padding:8px 10px}}
 </style>
 </head>
@@ -4005,7 +4007,11 @@ function renderInvList() {
                   <td><strong>${escapeHTML(it.code)}</strong></td>
                   <td>${escapeHTML(it.name)}</td>
                   <td style="text-align:right;font-weight:700;font-size:15px;color:${stockColor}">${stock}</td>
-                  <td style="text-align:right;color:var(--text3)">${limit>0 ? limit : '−'}</td>
+                  <td style="text-align:right">
+                    <button class="inv-limit-btn" onclick="editInvLimit('${escapeAttr(it.code)}')" title="Bấm để sửa ngưỡng">
+                      ${limit>0 ? limit : '<span style="color:var(--text3);font-weight:400">+ Đặt</span>'}
+                    </button>
+                  </td>
                   <td>${escapeHTML(it.unit||'')}</td>
                   <td style="text-align:right">${fmtMoney(it.price||0)}</td>
                   <td style="text-align:right;color:var(--text3)">${fmtMoney(stock * Number(it.price||0))}</td>
@@ -4036,6 +4042,95 @@ function filterInvList() {
     }
     tr.style.display = show ? '' : 'none';
   });
+}
+
+// Sửa ngưỡng cảnh báo cho 1 mặt hàng — mở modal
+function editInvLimit(code) {
+  const it = _invCache.items.find(x => (x.code||'').toUpperCase() === String(code).toUpperCase());
+  if (!it) return toast('Không tìm thấy mã ' + code, 'err');
+  const curLimit = Number(it.limit||0);
+
+  document.getElementById('modal-wrap').innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this)closeLimitModal()">
+      <div class="modal" style="max-width:420px">
+        <div class="modal-title">
+          <span>⚠️ Đặt ngưỡng cảnh báo</span>
+          <button class="modal-close" onclick="closeLimitModal()">✕</button>
+        </div>
+        <div class="inv-info-grid" style="margin-bottom:14px">
+          <div><span class="inv-lbl">Mã:</span> <strong>${escapeHTML(it.code)}</strong></div>
+          <div><span class="inv-lbl">Tên:</span> <strong>${escapeHTML(it.name)}</strong></div>
+          <div><span class="inv-lbl">Tồn:</span> <strong style="color:var(--accent2)">${it.stock} ${escapeHTML(it.unit||'')}</strong></div>
+          <div><span class="inv-lbl">Ngưỡng cũ:</span> <strong>${curLimit > 0 ? curLimit : '<span style="color:var(--text3)">chưa đặt</span>'}</strong></div>
+        </div>
+        <div class="field">
+          <label>Ngưỡng cảnh báo mới (đặt 0 = bỏ cảnh báo)</label>
+          <input class="inp" id="inv-limit-input" type="number" min="0" step="any" inputmode="decimal"
+                 value="${curLimit}" autofocus
+                 onkeydown="if(event.key==='Enter')saveInvLimit('${escapeAttr(it.code)}')">
+        </div>
+        <div style="font-size:12px;color:var(--text3);margin-top:8px;line-height:1.5">
+          💡 Khi tồn nhỏ hơn ngưỡng này, hệ thống sẽ báo đỏ và đẩy lên đầu danh sách.
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline" onclick="closeLimitModal()">Huỷ</button>
+          <button class="btn btn-gold" onclick="saveInvLimit('${escapeAttr(it.code)}')">💾 Lưu ngưỡng</button>
+        </div>
+      </div>
+    </div>
+  `;
+  setTimeout(() => {
+    const inp = document.getElementById('inv-limit-input');
+    if (inp) { inp.focus(); inp.select(); }
+  }, 80);
+}
+
+function closeLimitModal() {
+  document.getElementById('modal-wrap').innerHTML = '';
+}
+
+async function saveInvLimit(code) {
+  const inp = document.getElementById('inv-limit-input');
+  if (!inp) return;
+  const limit = Number(inp.value);
+  if (isNaN(limit) || limit < 0) return toast('Ngưỡng phải >= 0','err');
+
+  // Disable nút trong khi gửi (chống double-click)
+  const btns = document.querySelectorAll('.modal [onclick*="saveInvLimit"], .modal [onclick*="closeLimitModal"]');
+  const states = [];
+  btns.forEach(b => {
+    states.push({ el: b, html: b.innerHTML, disabled: b.disabled });
+    b.disabled = true;
+    if (b.classList.contains('btn-gold')) {
+      b.innerHTML = '<span class="spinner-inline"></span> Đang lưu...';
+    }
+    b.style.opacity = '0.6';
+    b.style.cursor = 'not-allowed';
+  });
+
+  try {
+    const res = await fetch('/api/sheet', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ action:'inv_set_limit', code, limit, staff: myName() })
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'Lỗi không xác định');
+    toast(limit > 0 ? `✅ Đã đặt ngưỡng = ${limit}` : '✅ Đã bỏ cảnh báo', 'ok');
+    closeLimitModal();
+    _invCache.loaded = false;
+    await loadInventory(true);
+  } catch(e) {
+    toast('❌ '+e.message, 'err');
+    states.forEach(s => {
+      try {
+        s.el.disabled = s.disabled;
+        s.el.innerHTML = s.html;
+        s.el.style.opacity = '';
+        s.el.style.cursor = '';
+      } catch(err){}
+    });
+  }
 }
 
 // ─── LỊCH SỬ XUẤT/NHẬP ───
