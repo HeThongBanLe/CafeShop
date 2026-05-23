@@ -3599,42 +3599,30 @@ function drawRevChart(labels, valuesA, valuesB, rawLabelsA, rawLabelsB) {
     });
   }
 
-  // Plugin vẽ giá trị trên đỉnh cột (chỉ khi không compare để khỏi rối)
-  const topLabelPlugin = {
-    id: 'topLabel',
-    afterDatasetsDraw(chart) {
-      if (chart.data.datasets.length > 1) return; // không hiện khi compare
-      const c = chart.ctx;
-      chart.data.datasets.forEach((ds, di) => {
-        const meta = chart.getDatasetMeta(di);
-        meta.data.forEach((el, i) => {
-          const v = ds.data[i];
-          if (!v) return;
-          c.save();
-          c.fillStyle = cream;
-          c.font = 'bold 11px "DM Sans", sans-serif';
-          c.textAlign = 'center';
-          c.textBaseline = 'bottom';
-          c.fillText(fmtShort(v), el.x, el.y - 4);
-          c.restore();
-        });
-      });
-    }
-  };
-
   _revenueChart = new Chart(ctx, {
     type: 'bar',
     data: { labels, datasets },
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      layout: { padding: { top: 22 } },
+      // Bấm vào bất cứ đâu trên cột (không cần đúng đỉnh)
+      interaction: { mode: 'index', intersect: false },
       plugins: {
         legend: {
           display: !!valuesB,
           labels: { color: text3, usePointStyle: true, padding: 12 }
         },
         tooltip: {
+          // Tooltip lớn, dễ đọc — hiện ngay khi tap/hover vào cột
+          mode: 'index',
+          intersect: false,
+          backgroundColor: 'rgba(20,16,12,.95)',
+          titleColor: cream,
+          titleFont: { size: 13, weight: 'bold' },
+          bodyColor: cream,
+          bodyFont: { size: 13 },
+          padding: 10,
+          cornerRadius: 6,
           callbacks: {
             title: (items) => {
               if (!items.length) return '';
@@ -3654,8 +3642,7 @@ function drawRevChart(labels, valuesA, valuesB, rawLabelsA, rawLabelsB) {
           grid: { color: border }
         }
       }
-    },
-    plugins: [topLabelPlugin]
+    }
   });
 }
 
