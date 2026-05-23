@@ -2668,7 +2668,8 @@ function printReceipt(tableNum, ord, mergedIn, total) {
     ? `(Da gop: ${[...new Set(ord.mergeLog.map(l=>l.fromTableNum).filter(Boolean))].map(n=>'Ban '+n).join(', ')})`
     : '';
 
-  const css = `@page{size:80mm auto;margin:0}*{margin:0;padding:0;box-sizing:border-box}
+  const css = `@page{size:80mm auto;margin:0}
+*{margin:0;padding:0;box-sizing:border-box}
 html,body{width:80mm;background:#fff;color:#000;font-family:'Courier New',monospace;font-size:12px;line-height:1.35}
 body{padding:3mm 2mm}.c{text-align:center}.b{font-weight:bold}.big{font-size:14px}.lg{font-size:16px}
 hr{border:none;border-top:1px dashed #000;margin:4px 0}
@@ -2697,16 +2698,55 @@ ${merged.map(it=>`<div class="row">
 
   const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>${css}</style></head><body>${body}</body></html>`;
 
-  // Dùng iframe ẩn — không mở tab mới, không bị chặn popup
-  // Chống double-click: nếu đang in thì bỏ qua
+  // Chống double-click
   if (window._isPrinting) return;
   window._isPrinting = true;
 
+  // ─── CHÈN CSS @media print VÀO TRANG CHA ───
+  // Khi user bấm In, trình duyệt sẽ ẨN trang chính và CHỈ HIỆN iframe in
+  // Đây là cách hoạt động ổn định trên cả mobile + desktop (Chrome, Firefox, Safari, Edge)
+  let printStyleEl = document.getElementById('print-iframe-style');
+  if (!printStyleEl) {
+    printStyleEl = document.createElement('style');
+    printStyleEl.id = 'print-iframe-style';
+    printStyleEl.textContent = `
+      @media print {
+        /* Khi in: giấu hết trang chính */
+        body > *:not(#print-frame) { display: none !important; }
+        /* CHỈ HIỆN iframe in, đưa về vị trí (0,0) */
+        #print-frame {
+          display: block !important;
+          visibility: visible !important;
+          position: absolute !important;
+          left: 0 !important;
+          top: 0 !important;
+          right: auto !important;
+          bottom: auto !important;
+          width: 100% !important;
+          height: auto !important;
+          min-height: 0 !important;
+          border: 0 !important;
+          margin: 0 !important;
+          padding: 0 !important;
+        }
+        html, body { margin: 0 !important; padding: 0 !important; background: #fff !important; }
+        @page { size: 80mm auto; margin: 0; }
+      }
+    `;
+    document.head.appendChild(printStyleEl);
+  }
+
+  // Xoá iframe cũ (nếu có)
   let frame = document.getElementById('print-frame');
   if (frame) frame.remove();
+
+  // Tạo iframe mới — KHÔNG dùng visibility:hidden vì khi in @media print
+  // cần thấy được nó. Thay vào đó, ẩn bằng position off-screen lúc bình thường.
   frame = document.createElement('iframe');
   frame.id = 'print-frame';
-  frame.style.cssText = 'position:fixed;right:-9999px;bottom:-9999px;width:80mm;height:600px;border:0;visibility:hidden';
+  // Lúc thường (không in): nhét sang lề phải ngoài viewport để user không thấy
+  // Khi in: @media print sẽ override position về 0,0
+  frame.style.cssText = 'position:fixed;right:-9999px;top:0;width:80mm;height:1px;border:0;background:#fff';
 
   // Chỉ in MỘT lần (dù onload + fallback đều fire)
   let printed = false;
@@ -2714,8 +2754,10 @@ ${merged.map(it=>`<div class="row">
     if (printed) return;
     printed = true;
     try {
-      frame.contentWindow.focus();
-      frame.contentWindow.print();
+      // QUAN TRỌNG: gọi print() trên window CHA, không phải iframe.contentWindow
+      // Vì @media print đã setup để hide-all-show-iframe
+      window.focus();
+      window.print();
     } catch(e) {
       console.error('print error:', e);
       toast('Lỗi in: ' + (e.message||e), 'err');
@@ -2727,13 +2769,12 @@ ${merged.map(it=>`<div class="row">
     }, 2000);
   };
 
-  // Đợi iframe LOAD XONG thật sự rồi mới in (thay vì timer cố định 300ms)
+  // Đợi iframe LOAD XONG thật sự rồi mới in
   frame.onload = triggerPrint;
-  // Fallback an toàn: nếu sau 1.5s onload chưa fire vì lý do gì đó
+  // Fallback an toàn: nếu sau 1.5s onload chưa fire
   setTimeout(triggerPrint, 1500);
 
   document.body.appendChild(frame);
-  // Dùng srcdoc thay cho document.write — onload sẽ fire ổn định hơn
   frame.srcdoc = html;
 }
 
