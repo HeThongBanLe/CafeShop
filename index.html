@@ -149,8 +149,16 @@ select.inp option{background:var(--surface2)}
 .card-title-left{display:flex;align-items:center;gap:8px}
 
 /* TABLE */
-.tbl-wrap{overflow-x:auto}
+.tbl-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch}
+.tbl-wrap::-webkit-scrollbar{height:8px}
+.tbl-wrap::-webkit-scrollbar-track{background:var(--bg2);border-radius:4px}
+.tbl-wrap::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px}
+.tbl-wrap::-webkit-scrollbar-thumb:hover{background:var(--accent)}
 table{width:100%;border-collapse:collapse}
+/* Bảng có data dài cần scroll ngang — không cho text wrap */
+.tbl-nowrap{min-width:700px}
+.tbl-nowrap td, .tbl-nowrap th{white-space:nowrap}
+.tbl-nowrap td.wrap{white-space:normal;min-width:140px;max-width:260px}
 th{text-align:left;padding:8px 12px;font-size:11px;text-transform:uppercase;letter-spacing:.8px;color:var(--text3);border-bottom:1px solid var(--border)}
 td{padding:9px 12px;border-bottom:1px solid var(--border);font-size:13px;color:var(--text)}
 tr:last-child td{border-bottom:none}
@@ -3969,7 +3977,7 @@ function renderInvList() {
       </div>
 
       <div class="tbl-wrap">
-        <table id="inv-table">
+        <table id="inv-table" class="tbl-nowrap">
           <thead>
             <tr>
               <th>Trạng thái</th>
@@ -3980,6 +3988,7 @@ function renderInvList() {
               <th style="text-align:right">Giá nhập</th>
               <th style="text-align:right">Giá trị</th>
               <th>Cập nhật cuối</th>
+              <th style="text-align:center">Thao tác</th>
             </tr>
           </thead>
           <tbody>
@@ -4005,7 +4014,7 @@ function renderInvList() {
                 <tr data-name="${escapeAttr((it.name||'').toLowerCase())}" data-code="${escapeAttr((it.code||'').toLowerCase())}" data-status="${statusKey}" style="${rowStyle}">
                   <td>${statusBadge}</td>
                   <td><strong>${escapeHTML(it.code)}</strong></td>
-                  <td>${escapeHTML(it.name)}</td>
+                  <td class="wrap">${escapeHTML(it.name)}</td>
                   <td style="text-align:right;font-weight:700;font-size:15px;color:${stockColor}">${stock}</td>
                   <td style="text-align:right">
                     <button class="inv-limit-btn" onclick="editInvLimit('${escapeAttr(it.code)}')" title="Bấm để sửa ngưỡng">
@@ -4016,9 +4025,13 @@ function renderInvList() {
                   <td style="text-align:right">${fmtMoney(it.price||0)}</td>
                   <td style="text-align:right;color:var(--text3)">${fmtMoney(stock * Number(it.price||0))}</td>
                   <td style="color:var(--text3);font-size:12px">${escapeHTML((it.updatedAt||'').slice(0,16).replace('T',' '))}</td>
+                  <td style="text-align:center;white-space:nowrap">
+                    <button class="btn btn-outline btn-xs" onclick="editInvItem('${escapeAttr(it.code)}')" title="Sửa mã/tên">✏️</button>
+                    <button class="btn btn-outline btn-xs" onclick="confirmDeleteInvItem('${escapeAttr(it.code)}')" title="Xoá mặt hàng" style="color:var(--red);border-color:var(--red)">🗑</button>
+                  </td>
                 </tr>
               `;
-            }).join('') : '<tr><td colspan="9" class="empty">Kho chưa có mặt hàng nào</td></tr>'}
+            }).join('') : '<tr><td colspan="10" class="empty">Kho chưa có mặt hàng nào</td></tr>'}
           </tbody>
         </table>
       </div>
@@ -4133,6 +4146,194 @@ async function saveInvLimit(code) {
   }
 }
 
+// ─── SỬA MÃ / TÊN / ĐƠN VỊ / GIÁ ───
+function editInvItem(code) {
+  const it = _invCache.items.find(x => (x.code||'').toUpperCase() === String(code).toUpperCase());
+  if (!it) return toast('Không tìm thấy mã ' + code, 'err');
+
+  document.getElementById('modal-wrap').innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this)closeLimitModal()">
+      <div class="modal" style="max-width:520px">
+        <div class="modal-title">
+          <span>✏️ Sửa thông tin mặt hàng</span>
+          <button class="modal-close" onclick="closeLimitModal()">✕</button>
+        </div>
+        <div class="inv-info-grid" style="margin-bottom:14px">
+          <div><span class="inv-lbl">Tồn:</span> <strong style="color:var(--accent2)">${it.stock} ${escapeHTML(it.unit||'')}</strong></div>
+          <div><span class="inv-lbl">Ngưỡng:</span> <strong>${Number(it.limit||0) > 0 ? it.limit : '<span style="color:var(--text3)">chưa đặt</span>'}</strong></div>
+        </div>
+        <div class="grid-2">
+          <div class="field">
+            <label>Mã mới <span style="color:var(--text3);font-weight:400">(đổi mã cũ: ${escapeHTML(it.code)})</span></label>
+            <input class="inp" id="invedit-code" value="${escapeAttr(it.code)}">
+          </div>
+          <div class="field">
+            <label>Tên hàng</label>
+            <input class="inp" id="invedit-name" value="${escapeAttr(it.name)}">
+          </div>
+          <div class="field">
+            <label>Đơn vị</label>
+            <input class="inp" id="invedit-unit" value="${escapeAttr(it.unit||'')}">
+          </div>
+          <div class="field">
+            <label>Giá nhập</label>
+            <input class="inp" id="invedit-price" type="number" min="0" value="${it.price||0}">
+          </div>
+        </div>
+        <div class="field">
+          <label>Ghi chú</label>
+          <input class="inp" id="invedit-note" value="${escapeAttr(it.note||'')}">
+        </div>
+        <div style="font-size:12px;color:var(--text3);margin-top:8px;line-height:1.5">
+          💡 Đổi mã sẽ cập nhật lịch sử nhập/xuất cũ để vẫn liên kết được với mặt hàng.<br>
+          ⚠️ Không sửa được Tồn và Ngưỡng ở đây — dùng nhập/xuất hoặc nút Ngưỡng.
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline" onclick="closeLimitModal()">Huỷ</button>
+          <button class="btn btn-gold" onclick="submitEditInvItem('${escapeAttr(it.code)}')">💾 Lưu</button>
+        </div>
+      </div>
+    </div>
+  `;
+  setTimeout(() => {
+    const inp = document.getElementById('invedit-name');
+    if (inp) { inp.focus(); inp.select(); }
+  }, 80);
+}
+
+async function submitEditInvItem(oldCode) {
+  const newCode = (document.getElementById('invedit-code').value||'').trim().toUpperCase();
+  const name = (document.getElementById('invedit-name').value||'').trim();
+  const unit = (document.getElementById('invedit-unit').value||'').trim();
+  const price = Number(document.getElementById('invedit-price').value||0);
+  const note = (document.getElementById('invedit-note').value||'').trim();
+
+  if (!newCode) return toast('Mã không được rỗng','err');
+  if (!name) return toast('Tên không được rỗng','err');
+
+  // Nếu đổi mã, check trùng
+  if (newCode !== String(oldCode).toUpperCase()) {
+    if (_invCache.items.some(it => (it.code||'').toUpperCase() === newCode)) {
+      return toast('Mã "' + newCode + '" đã tồn tại trong kho','err');
+    }
+    if (!confirm(`Đổi mã từ "${oldCode}" sang "${newCode}"?\nLịch sử cũ sẽ tự động được cập nhật.`)) return;
+  }
+
+  // Disable nút
+  const btns = document.querySelectorAll('.modal [onclick*="submitEditInvItem"], .modal [onclick*="closeLimitModal"]');
+  const states = [];
+  btns.forEach(b => {
+    states.push({ el: b, html: b.innerHTML, disabled: b.disabled });
+    b.disabled = true;
+    if (b.classList.contains('btn-gold')) {
+      b.innerHTML = '<span class="spinner-inline"></span> Đang lưu...';
+    }
+    b.style.opacity = '0.6';
+  });
+
+  try {
+    const res = await fetch('/api/sheet', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        action:'inv_edit',
+        oldCode, newCode, name, unit, price, note,
+        staff: myName()
+      })
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'Lỗi không xác định');
+    toast('✅ Đã cập nhật mặt hàng', 'ok');
+    closeLimitModal();
+    _invCache.loaded = false;
+    await loadInventory(true);
+  } catch(e) {
+    toast('❌ '+e.message, 'err');
+    states.forEach(s => {
+      try {
+        s.el.disabled = s.disabled;
+        s.el.innerHTML = s.html;
+        s.el.style.opacity = '';
+      } catch(err){}
+    });
+  }
+}
+
+// ─── XOÁ MẶT HÀNG ───
+function confirmDeleteInvItem(code) {
+  const it = _invCache.items.find(x => (x.code||'').toUpperCase() === String(code).toUpperCase());
+  if (!it) return toast('Không tìm thấy','err');
+  const stock = Number(it.stock||0);
+  const warnStock = stock > 0
+    ? `<div style="background:rgba(220,53,69,.12);border:1px solid rgba(220,53,69,.4);padding:10px 12px;border-radius:8px;margin:12px 0;font-size:13px;color:#ff6b7a">
+         ⚠️ Mặt hàng này còn <strong>${stock} ${escapeHTML(it.unit||'')}</strong> tồn kho. Bạn vẫn muốn xoá?
+       </div>` : '';
+  document.getElementById('modal-wrap').innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this)closeLimitModal()">
+      <div class="modal" style="max-width:440px">
+        <div class="modal-title">
+          <span>🗑 Xoá mặt hàng</span>
+          <button class="modal-close" onclick="closeLimitModal()">✕</button>
+        </div>
+        <div style="padding:8px 0">
+          <div style="font-size:14px;margin-bottom:8px">Xác nhận xoá mặt hàng dưới đây?</div>
+          <div class="inv-info-grid">
+            <div><span class="inv-lbl">Mã:</span> <strong>${escapeHTML(it.code)}</strong></div>
+            <div><span class="inv-lbl">Tên:</span> <strong>${escapeHTML(it.name)}</strong></div>
+            <div><span class="inv-lbl">Tồn:</span> <strong>${stock} ${escapeHTML(it.unit||'')}</strong></div>
+          </div>
+          ${warnStock}
+          <div style="font-size:12px;color:var(--text3);line-height:1.6;margin-top:8px">
+            • Mặt hàng sẽ bị xoá khỏi danh sách<br>
+            • <strong>Lịch sử nhập/xuất cũ vẫn được giữ</strong> (không thể khôi phục mặt hàng bằng cách undo)
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline" onclick="closeLimitModal()">Huỷ</button>
+          <button class="btn btn-red" onclick="doDeleteInvItem('${escapeAttr(it.code)}')">🗑 Xoá vĩnh viễn</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function doDeleteInvItem(code) {
+  // Disable nút
+  const btns = document.querySelectorAll('.modal [onclick*="doDeleteInvItem"], .modal [onclick*="closeLimitModal"]');
+  const states = [];
+  btns.forEach(b => {
+    states.push({ el: b, html: b.innerHTML, disabled: b.disabled });
+    b.disabled = true;
+    if (b.classList.contains('btn-red')) {
+      b.innerHTML = '<span class="spinner-inline"></span> Đang xoá...';
+    }
+    b.style.opacity = '0.6';
+  });
+
+  try {
+    const res = await fetch('/api/sheet', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ action:'inv_delete', code, staff: myName() })
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'Lỗi không xác định');
+    toast('✅ Đã xoá ' + code, 'ok');
+    closeLimitModal();
+    _invCache.loaded = false;
+    await loadInventory(true);
+  } catch(e) {
+    toast('❌ '+e.message, 'err');
+    states.forEach(s => {
+      try {
+        s.el.disabled = s.disabled;
+        s.el.innerHTML = s.html;
+        s.el.style.opacity = '';
+      } catch(err){}
+    });
+  }
+}
+
 // ─── LỊCH SỬ XUẤT/NHẬP ───
 function renderInvLog() {
   const today = new Date().toISOString().slice(0,10);
@@ -4182,7 +4383,7 @@ function renderInvLogTable() {
       <div class="stat"><div class="stat-label">Tổng dòng</div><div class="stat-val">${logs.length}</div><div class="stat-sub">${from} → ${to}</div></div>
     </div>
     <div class="tbl-wrap">
-      <table>
+      <table class="tbl-nowrap">
         <thead>
           <tr><th>Thời gian</th><th>Loại</th><th>Mã</th><th>Tên</th><th style="text-align:right">SL</th><th>Ghi chú</th><th>NV</th></tr>
         </thead>
@@ -4190,16 +4391,19 @@ function renderInvLogTable() {
           ${logs.length ? logs.map(l => `
             <tr>
               <td style="color:var(--text3);font-size:12px">${escapeHTML(String(l.timestamp||'').slice(0,16).replace('T',' '))}</td>
-              <td><span class="tag ${l.type==='IN'?'tag-green':'tag-red'}">${l.type==='IN'?'📥 Nhập':'📤 Xuất'}</span></td>
+              <td><span class="tag ${l.type==='IN'?'tag-green':l.type==='OUT'?'tag-red':'tag-gold'}">${l.type==='IN'?'📥 Nhập':l.type==='OUT'?'📤 Xuất':'⚙️ '+escapeHTML(l.type)}</span></td>
               <td><strong>${escapeHTML(l.code||'')}</strong></td>
-              <td>${escapeHTML(l.name||'')}</td>
-              <td style="text-align:right;font-weight:600;color:${l.type==='IN'?'var(--green)':'var(--red)'}">${l.type==='IN'?'+':'-'}${l.qty}</td>
-              <td style="color:var(--text3)">${escapeHTML(l.note||'')}</td>
+              <td class="wrap">${escapeHTML(l.name||'')}</td>
+              <td style="text-align:right;font-weight:600;color:${l.type==='IN'?'var(--green)':l.type==='OUT'?'var(--red)':'var(--accent2)'}">${l.type==='IN'?'+':l.type==='OUT'?'-':''}${l.qty}</td>
+              <td class="wrap" style="color:var(--text3)">${escapeHTML(l.note||'')}</td>
               <td style="color:var(--text3);font-size:12px">${escapeHTML(l.staff||'')}</td>
             </tr>
           `).join('') : '<tr><td colspan="7" class="empty">Chưa có giao dịch</td></tr>'}
         </tbody>
       </table>
+    </div>
+    <div style="font-size:11px;color:var(--text3);margin-top:8px;text-align:center;font-style:italic">
+      ${logs.length > 0 ? '💡 Cuộn ngang ➡️ để xem hết các cột nếu màn hình hẹp' : ''}
     </div>
   `;
 }
