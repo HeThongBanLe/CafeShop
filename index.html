@@ -303,6 +303,15 @@ tbody tr:hover td{background:rgba(255,255,255,.02)}
 }
 .spinner{width:30px;height:30px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;margin:40px auto}
 .spinner-inline{display:inline-block;width:12px;height:12px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;animation:spin .8s linear infinite;vertical-align:-2px;margin-right:6px}
+/* Permission toggle switch */
+.perm-toggle{display:inline-flex;align-items:center;gap:8px;cursor:pointer;user-select:none}
+.perm-toggle input{position:absolute;opacity:0;width:0;height:0;pointer-events:none}
+.perm-toggle-slider{position:relative;width:38px;height:20px;background:#3a332c;border-radius:20px;transition:.2s;flex-shrink:0}
+.perm-toggle-slider::after{content:'';position:absolute;top:2px;left:2px;width:16px;height:16px;background:#fff;border-radius:50%;transition:.2s;box-shadow:0 1px 3px rgba(0,0,0,.3)}
+.perm-toggle input:checked + .perm-toggle-slider{background:var(--accent)}
+.perm-toggle input:checked + .perm-toggle-slider::after{transform:translateX(18px)}
+.perm-toggle input:disabled + .perm-toggle-slider{opacity:.4;cursor:not-allowed}
+.perm-toggle-label{font-size:11px;color:var(--text3);white-space:nowrap}
 @keyframes spin{to{transform:rotate(360deg)}}
 .empty{text-align:center;color:var(--text3);padding:32px;font-size:13px}
 .divider{height:1px;background:var(--border);margin:12px 0}
@@ -548,6 +557,7 @@ async function checkStaffActive(email) {
 
 // Realtime watcher: theo dõi staff doc của user đang login
 // Nếu admin đổi active=false → kick ngay
+// Nếu admin bỏ canInventory mà user đang ở tab Kho → đẩy về POS ngay
 function startDisabledWatcher(email) {
   stopDisabledWatcher();
   const emailLower = (email || '').toLowerCase().trim();
@@ -556,12 +566,42 @@ function startDisabledWatcher(email) {
   disabledWatcherUnsub = onSnapshot(q, (snap) => {
     if (!currentUser || isAdmin) return;
     snap.docs.forEach(d => {
-      if (d.data().active === false) {
+      const data = d.data();
+
+      // Update cache local để getStaffNav() trả đúng quyền
+      staffList = staffList.map(s => s.email === emailLower ? { ...s, ...data, id: d.id } : s);
+
+      // 1) Bị khoá tài khoản -> đăng xuất
+      if (data.active === false) {
         toast('🚫 Tài khoản của bạn vừa bị vô hiệu hoá!', 'err');
         stopDisabledWatcher();
         setTimeout(async () => {
           try { await window._firebase.signOut(window._auth); } catch(e){}
         }, 1200);
+        return;
+      }
+
+      // 2) Bị bỏ quyền kho -> rebuild nav + kick khỏi tab Kho nếu đang ở đó
+      const canInv = data.canInventory === true;
+      buildNav();
+      // Re-highlight tab đang active sau khi rebuild
+      const navEl = document.getElementById('nav-' + currentPage);
+      if (navEl) navEl.classList.add('active');
+
+      if (!canInv && currentPage === 'inventory') {
+        toast('🚫 Quyền quản lý kho của bạn vừa bị thu hồi', 'err');
+        // Dừng camera nếu đang quét
+        try { if (typeof closeScanner === 'function') closeScanner(); } catch(e){}
+        // Đóng modal kho nếu đang mở
+        try {
+          const mw = document.getElementById('modal-wrap');
+          if (mw && mw.innerHTML.includes('inv-')) mw.innerHTML = '';
+        } catch(e){}
+        setTimeout(() => navigateTo('pos'), 800);
+      } else if (canInv && currentPage === 'pos') {
+        // Vừa được CẤP quyền -> báo cho user biết có tab mới
+        // (chỉ toast nhẹ, không tự chuyển trang vì user đang làm việc khác)
+        toast('📦 Bạn vừa được cấp quyền Quản lý kho. Mở từ menu bên trái.', 'ok');
       }
     });
   });
@@ -984,10 +1024,21 @@ const ADMIN_NAV = [
   {id:'history',   icon:'📋', label:'Lịch sử'},
   {id:'data',      icon:'📈', label:'Phân tích'},
 ];
-const STAFF_NAV = [{id:'pos',icon:'🧾',label:'Bán hàng'}];
+const STAFF_NAV_BASE = [{id:'pos',icon:'🧾',label:'Bán hàng'}];
+
+// Trả về nav cho nhân viên hiện tại (động theo quyền)
+function getStaffNav() {
+  const nav = [...STAFF_NAV_BASE];
+  // Tìm staff record của user hiện tại để check quyền
+  const me = staffList.find(s => (s.email||'').toLowerCase() === (currentUser?.email||'').toLowerCase());
+  if (me && me.canInventory === true && me.active !== false) {
+    nav.push({id:'inventory', icon:'📦', label:'Quản lý kho'});
+  }
+  return nav;
+}
 
 function buildNav() {
-  const pages = isAdmin ? ADMIN_NAV : STAFF_NAV;
+  const pages = isAdmin ? ADMIN_NAV : getStaffNav();
   document.getElementById('nav').innerHTML = pages.map(p =>
     `<div class="nav-item" id="nav-${p.id}" onclick="navigateTo('${p.id}')">
        <span class="nav-icon">${p.icon}</span>${p.label}
@@ -996,6 +1047,14 @@ function buildNav() {
 
 let currentPage = '';
 function navigateTo(page) {
+  // Bảo vệ tab Kho cho staff: phải có canInventory=true
+  if (!isAdmin && page === 'inventory') {
+    const me = staffList.find(s => (s.email||'').toLowerCase() === (currentUser?.email||'').toLowerCase());
+    if (!me || me.canInventory !== true) {
+      toast('🚫 Bạn không có quyền truy cập Quản lý kho','err');
+      page = 'pos';
+    }
+  }
   currentPage = page;
   document.querySelectorAll('.nav-item').forEach(el=>el.classList.remove('active'));
   const nav = document.getElementById('nav-'+page);
@@ -1251,15 +1310,24 @@ function renderStaffList() {
     return;
   }
   area.innerHTML = `<div class="tbl-wrap"><table>
-    <thead><tr><th>Tên đăng nhập</th><th>Họ tên</th><th>Trạng thái</th><th>Thao tác</th></tr></thead>
+    <thead><tr><th>Tên đăng nhập</th><th>Họ tên</th><th>Trạng thái</th><th>📦 Quyền kho</th><th>Thao tác</th></tr></thead>
     <tbody>${staffList.map(s => {
       const isActive = s.active !== false;
+      const canInv = s.canInventory === true;
       return `<tr style="${isActive ? '' : 'opacity:.5'}">
         <td style="font-weight:600">${loginName(s.email)}</td>
         <td>${s.fullName || '-'}</td>
         <td>${isActive
           ? '<span class="tag tag-green">✓ Hoạt động</span>'
           : '<span class="tag tag-red">✗ Đã khoá</span>'}</td>
+        <td>
+          <label class="perm-toggle" title="Bấm để bật/tắt quyền quản lý kho">
+            <input type="checkbox" ${canInv?'checked':''} ${isActive?'':'disabled'}
+                   onchange="toggleInvPermission('${s.id}','${escapeAttr(s.email)}', this.checked, this)">
+            <span class="perm-toggle-slider"></span>
+            <span class="perm-toggle-label">${canInv?'✅ Có':'⛔ Không'}</span>
+          </label>
+        </td>
         <td style="display:flex;gap:4px;flex-wrap:wrap">
           <button class="btn btn-ghost btn-xs" onclick="openEditStaff('${s.id}')">✏️ Sửa</button>
           ${isActive
@@ -1270,6 +1338,25 @@ function renderStaffList() {
     }).join('')}
     </tbody>
   </table></div>`;
+}
+
+// Toggle quyền quản lý kho (admin bấm checkbox)
+async function toggleInvPermission(id, email, newValue, checkbox) {
+  if (checkbox) { checkbox.disabled = true; }
+  try {
+    const { doc, updateDoc } = window._firebase;
+    await updateDoc(doc(window._db, 'staff', id), { canInventory: !!newValue });
+    // Update cache local
+    staffList = staffList.map(s => s.id === id ? { ...s, canInventory: !!newValue } : s);
+    toast(newValue
+      ? `✅ Đã cấp quyền kho cho ${displayName(email)}`
+      : `🚫 Đã thu hồi quyền kho của ${displayName(email)}. Nếu họ đang ở tab Kho sẽ bị đá ra ngay.`,
+      newValue ? 'ok' : 'info');
+    renderStaffList();
+  } catch(e) {
+    toast('❌ Lỗi: ' + (e.message||e), 'err');
+    if (checkbox) { checkbox.checked = !newValue; checkbox.disabled = false; }
+  }
 }
 
 // Tạo secondary Firebase app để thao tác Auth mà không ảnh hưởng session admin
@@ -1353,11 +1440,12 @@ async function addStaff() {
       email: u,
       fullName: fn,
       active: true,
+      canInventory: false, // Mặc định KHÔNG có quyền kho. Admin tick sau nếu cần.
       pwd: p, // Lưu để dùng khi admin muốn đổi mật khẩu
       createdAt: new Date().toISOString(),
       createdBy: currentUser.email
     });
-    staffList.push({ id: ref.id, email: u, fullName: fn, active: true, pwd: p });
+    staffList.push({ id: ref.id, email: u, fullName: fn, active: true, canInventory: false, pwd: p });
     closeModal();
     toast(`✅ Đã tạo tài khoản: ${displayName(u)}`, 'ok');
     renderStaffList();
