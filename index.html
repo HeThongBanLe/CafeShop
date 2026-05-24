@@ -303,6 +303,8 @@ tbody tr:hover td{background:rgba(255,255,255,.02)}
 }
 .spinner{width:30px;height:30px;border:3px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin 1s linear infinite;margin:40px auto}
 .spinner-inline{display:inline-block;width:12px;height:12px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;animation:spin .8s linear infinite;vertical-align:-2px;margin-right:6px}
+.money-input{font-variant-numeric:tabular-nums;letter-spacing:.4px}
+.money-words{font-size:11px;color:var(--accent2);margin-top:3px;font-style:italic;min-height:14px;text-transform:capitalize}
 /* Permission toggle switch */
 .perm-toggle{display:inline-flex;align-items:center;gap:8px;cursor:pointer;user-select:none}
 .perm-toggle input{position:absolute;opacity:0;width:0;height:0;pointer-events:none}
@@ -1105,6 +1107,93 @@ function myName() {
   return currentUserFullName || displayName(currentUser?.email || '');
 }
 function fmtMoney(n) { return Number(n||0).toLocaleString('vi-VN') + ' ₫'; }
+
+// Helper format số (chỉ có dấu phẩy, không có ₫) cho ô input
+function fmtNum(n) { return Number(n||0).toLocaleString('vi-VN'); }
+
+// Parse số từ chuỗi có thể chứa dấu phẩy/chấm/khoảng trắng
+function parseMoney(s) {
+  if (s == null || s === '') return 0;
+  // Bỏ tất cả ký tự không phải số
+  const cleaned = String(s).replace(/[^\d]/g, '');
+  return Number(cleaned) || 0;
+}
+
+// Auto-format khi gõ vào ô tiền + đọc số ra chữ
+function onMoneyInput(el) {
+  // Lưu vị trí caret
+  const oldVal = el.value;
+  const oldLen = oldVal.length;
+  const caret = el.selectionStart || 0;
+  // Đếm số digit từ đầu đến caret để giữ vị trí caret chính xác
+  let digitsBeforeCaret = 0;
+  for (let i = 0; i < caret; i++) {
+    if (/\d/.test(oldVal[i])) digitsBeforeCaret++;
+  }
+
+  const num = parseMoney(oldVal);
+  const newVal = num > 0 ? fmtNum(num) : '';
+  el.value = newVal;
+
+  // Đặt lại caret
+  if (document.activeElement === el) {
+    let pos = 0, counted = 0;
+    while (pos < newVal.length && counted < digitsBeforeCaret) {
+      if (/\d/.test(newVal[pos])) counted++;
+      pos++;
+    }
+    try { el.setSelectionRange(pos, pos); } catch(e){}
+  }
+
+  // Update text "đọc bằng chữ" (nếu có element)
+  const wordsEl = document.getElementById(el.id + '-words');
+  if (wordsEl) wordsEl.textContent = num > 0 ? numberToVnWords(num) + ' đồng' : '';
+}
+
+// Đọc số ra chữ tiếng Việt (đơn giản, chỉ cho con số nguyên dương)
+function numberToVnWords(n) {
+  n = Math.abs(Math.floor(Number(n)||0));
+  if (n === 0) return 'không';
+  const digits = ['không','một','hai','ba','bốn','năm','sáu','bảy','tám','chín'];
+  const readThreeDigits = (num, full) => {
+    const h = Math.floor(num/100);
+    const t = Math.floor((num%100)/10);
+    const u = num%10;
+    const parts = [];
+    if (h > 0) {
+      parts.push(digits[h] + ' trăm');
+    } else if (full && (t > 0 || u > 0)) {
+      parts.push('không trăm');
+    }
+    if (t > 1) {
+      parts.push(digits[t] + ' mươi');
+      if (u === 1) parts.push('mốt');
+      else if (u === 5) parts.push('lăm');
+      else if (u > 0) parts.push(digits[u]);
+    } else if (t === 1) {
+      parts.push('mười');
+      if (u === 5) parts.push('lăm');
+      else if (u > 0) parts.push(digits[u]);
+    } else if (t === 0 && u > 0) {
+      if (full || h > 0) parts.push('lẻ');
+      parts.push(digits[u]);
+    }
+    return parts.join(' ');
+  };
+  const units = ['', 'nghìn', 'triệu', 'tỷ'];
+  const chunks = [];
+  while (n > 0) {
+    chunks.push(n % 1000);
+    n = Math.floor(n / 1000);
+  }
+  const parts = [];
+  for (let i = chunks.length - 1; i >= 0; i--) {
+    if (chunks[i] === 0) continue;
+    const word = readThreeDigits(chunks[i], i < chunks.length - 1);
+    parts.push(word + (units[i] ? ' ' + units[i] : ''));
+  }
+  return parts.join(' ').replace(/\s+/g,' ').trim();
+}
 function safeId(s) {
   // Convert any string (including Vietnamese) to a safe HTML id
   let h = 0;
@@ -3376,8 +3465,9 @@ async function openSalaryConfig(email, name) {
         <div class="grid-2">
           <div class="field">
             <label>Lương cơ bản (đ)</label>
-            <input class="inp" id="cfg-base" type="number" min="0" placeholder="VD: 5000000"
-              value="${existing.baseSalary || ''}" inputmode="numeric">
+            <input class="inp money-input" id="cfg-base" type="text" placeholder="VD: 5,000,000"
+              value="${existing.baseSalary ? fmtNum(existing.baseSalary) : ''}" inputmode="numeric" oninput="onMoneyInput(this)">
+            <div class="money-words" id="cfg-base-words"></div>
           </div>
           <div class="field">
             <label>Hoa hồng % doanh thu TT</label>
@@ -3386,13 +3476,15 @@ async function openSalaryConfig(email, name) {
           </div>
           <div class="field">
             <label>Thưởng / Phụ cấp (đ)</label>
-            <input class="inp" id="cfg-bonus" type="number" min="0" placeholder="0"
-              value="${existing.bonus || ''}" inputmode="numeric">
+            <input class="inp money-input" id="cfg-bonus" type="text" placeholder="0"
+              value="${existing.bonus ? fmtNum(existing.bonus) : ''}" inputmode="numeric" oninput="onMoneyInput(this)">
+            <div class="money-words" id="cfg-bonus-words"></div>
           </div>
           <div class="field">
             <label>Khấu trừ (đ)</label>
-            <input class="inp" id="cfg-deduct" type="number" min="0" placeholder="0"
-              value="${existing.deduct || ''}" inputmode="numeric">
+            <input class="inp money-input" id="cfg-deduct" type="text" placeholder="0"
+              value="${existing.deduct ? fmtNum(existing.deduct) : ''}" inputmode="numeric" oninput="onMoneyInput(this)">
+            <div class="money-words" id="cfg-deduct-words"></div>
           </div>
         </div>
         ${existing.updatedAt ? `
@@ -3407,7 +3499,14 @@ async function openSalaryConfig(email, name) {
       </div>
     </div>
   `;
-  setTimeout(() => document.getElementById('cfg-base')?.focus(), 80);
+  setTimeout(() => {
+    document.getElementById('cfg-base')?.focus();
+    // Update "đọc số bằng chữ" cho các giá trị đã có sẵn
+    ['cfg-base','cfg-bonus','cfg-deduct'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el && el.value) onMoneyInput(el);
+    });
+  }, 80);
 }
 
 function closeSalaryConfig() {
@@ -3415,10 +3514,10 @@ function closeSalaryConfig() {
 }
 
 async function saveSalaryConfig(email, name) {
-  const base = Number(document.getElementById('cfg-base').value||0);
+  const base = parseMoney(document.getElementById('cfg-base').value);
   const pct = Number(document.getElementById('cfg-pct').value||0);
-  const bonus = Number(document.getElementById('cfg-bonus').value||0);
-  const deduct = Number(document.getElementById('cfg-deduct').value||0);
+  const bonus = parseMoney(document.getElementById('cfg-bonus').value);
+  const deduct = parseMoney(document.getElementById('cfg-deduct').value);
 
   // Disable buttons
   const btns = document.querySelectorAll('.modal [onclick*="saveSalaryConfig"], .modal [onclick*="closeSalaryConfig"]');
