@@ -5219,7 +5219,7 @@ function renderInvList() {
               <th style="text-align:right">Giá nhập</th>
               <th style="text-align:right">Giá trị</th>
               <th>Cập nhật cuối</th>
-              <th style="text-align:center">Thao tác</th>
+              ${isAdmin ? '<th style="text-align:center">Thao tác</th>' : ''}
             </tr>
           </thead>
           <tbody>
@@ -5247,22 +5247,20 @@ function renderInvList() {
                   <td><strong>${escapeHTML(it.code)}</strong></td>
                   <td class="wrap">${escapeHTML(it.name)}</td>
                   <td style="text-align:right;font-weight:700;font-size:15px;color:${stockColor}">${stock}</td>
-                  <td style="text-align:right">
-                    <button class="inv-limit-btn" onclick="editInvLimit('${escapeAttr(it.code)}')" title="Bấm để sửa ngưỡng">
-                      ${limit>0 ? limit : '<span style="color:var(--text3);font-weight:400">+ Đặt</span>'}
-                    </button>
+                  <td style="text-align:right;color:${limit>0 ? 'var(--text)' : 'var(--text3)'}">
+                    ${limit>0 ? limit : '−'}
                   </td>
                   <td>${escapeHTML(it.unit||'')}</td>
                   <td style="text-align:right">${fmtMoney(it.price||0)}</td>
                   <td style="text-align:right;color:var(--text3)">${fmtMoney(stock * Number(it.price||0))}</td>
                   <td style="color:var(--text3);font-size:12px">${escapeHTML((it.updatedAt||'').slice(0,16).replace('T',' '))}</td>
-                  <td style="text-align:center;white-space:nowrap">
+                  ${isAdmin ? `<td style="text-align:center;white-space:nowrap">
                     <button class="btn btn-outline btn-xs" onclick="editInvItem('${escapeAttr(it.code)}')" title="Sửa mã/tên">✏️</button>
                     <button class="btn btn-outline btn-xs" onclick="confirmDeleteInvItem('${escapeAttr(it.code)}')" title="Xoá mặt hàng" style="color:var(--red);border-color:var(--red)">🗑</button>
-                  </td>
+                  </td>` : ''}
                 </tr>
               `;
-            }).join('') : '<tr><td colspan="10" class="empty">Kho chưa có mặt hàng nào</td></tr>'}
+            }).join('') : `<tr><td colspan="${isAdmin?10:9}" class="empty">Kho chưa có mặt hàng nào</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -5379,6 +5377,7 @@ async function saveInvLimit(code) {
 
 // ─── SỬA MÃ / TÊN / ĐƠN VỊ / GIÁ ───
 function editInvItem(code) {
+  if (!isAdmin) return toast('🚫 Chỉ admin mới được sửa mặt hàng','err');
   const it = _invCache.items.find(x => (x.code||'').toUpperCase() === String(code).toUpperCase());
   if (!it) return toast('Không tìm thấy mã ' + code, 'err');
 
@@ -5391,7 +5390,7 @@ function editInvItem(code) {
         </div>
         <div class="inv-info-grid" style="margin-bottom:14px">
           <div><span class="inv-lbl">Tồn:</span> <strong style="color:var(--accent2)">${it.stock} ${escapeHTML(it.unit||'')}</strong></div>
-          <div><span class="inv-lbl">Ngưỡng:</span> <strong>${Number(it.limit||0) > 0 ? it.limit : '<span style="color:var(--text3)">chưa đặt</span>'}</strong></div>
+          <div><span class="inv-lbl">Cập nhật:</span> <strong style="font-size:12px;color:var(--text3)">${escapeHTML((it.updatedAt||'').slice(0,16).replace('T',' '))}</strong></div>
         </div>
         <div class="grid-2">
           <div class="field">
@@ -5410,6 +5409,10 @@ function editInvItem(code) {
             <label>Giá nhập</label>
             <input class="inp" id="invedit-price" type="number" min="0" value="${it.price||0}">
           </div>
+          <div class="field" style="grid-column:1/-1">
+            <label>⚠️ Ngưỡng cảnh báo <span style="color:var(--text3);font-weight:400">(tồn ≤ ngưỡng = báo đỏ · đặt 0 = bỏ cảnh báo)</span></label>
+            <input class="inp" id="invedit-limit" type="number" min="0" step="any" value="${Number(it.limit||0)}" placeholder="VD: 10">
+          </div>
         </div>
         <div class="field">
           <label>Ghi chú</label>
@@ -5417,7 +5420,7 @@ function editInvItem(code) {
         </div>
         <div style="font-size:12px;color:var(--text3);margin-top:8px;line-height:1.5">
           💡 Đổi mã sẽ cập nhật lịch sử nhập/xuất cũ để vẫn liên kết được với mặt hàng.<br>
-          ⚠️ Không sửa được Tồn và Ngưỡng ở đây — dùng nhập/xuất hoặc nút Ngưỡng.
+          ⚠️ Tồn KHÔNG sửa ở đây — dùng tab Nhập/Xuất kho.
         </div>
         <div class="modal-footer">
           <button class="btn btn-outline" onclick="closeLimitModal()">Huỷ</button>
@@ -5437,10 +5440,12 @@ async function submitEditInvItem(oldCode) {
   const name = (document.getElementById('invedit-name').value||'').trim();
   const unit = (document.getElementById('invedit-unit').value||'').trim();
   const price = Number(document.getElementById('invedit-price').value||0);
+  const limit = Number(document.getElementById('invedit-limit').value||0);
   const note = (document.getElementById('invedit-note').value||'').trim();
 
   if (!newCode) return toast('Mã không được rỗng','err');
   if (!name) return toast('Tên không được rỗng','err');
+  if (limit < 0) return toast('Ngưỡng phải ≥ 0','err');
 
   // Nếu đổi mã, check trùng
   if (newCode !== String(oldCode).toUpperCase()) {
@@ -5468,7 +5473,7 @@ async function submitEditInvItem(oldCode) {
       headers:{'Content-Type':'application/json'},
       body: JSON.stringify({
         action:'inv_edit',
-        oldCode, newCode, name, unit, price, note,
+        oldCode, newCode, name, unit, price, limit, note,
         staff: myName()
       })
     });
@@ -5492,6 +5497,7 @@ async function submitEditInvItem(oldCode) {
 
 // ─── XOÁ MẶT HÀNG ───
 function confirmDeleteInvItem(code) {
+  if (!isAdmin) return toast('🚫 Chỉ admin mới được xoá mặt hàng','err');
   const it = _invCache.items.find(x => (x.code||'').toUpperCase() === String(code).toUpperCase());
   if (!it) return toast('Không tìm thấy','err');
   const stock = Number(it.stock||0);
