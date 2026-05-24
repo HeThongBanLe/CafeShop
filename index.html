@@ -3178,7 +3178,163 @@ function renderStaffStatsTable() {
         </tbody>
       </table>
     </div>
+
+    <!-- TREND CHART -->
+    <div class="card" style="margin-top:14px">
+      <div class="card-title">
+        <div class="card-title-left">📈 Trend nhân viên theo ngày</div>
+        <select id="staff-trend-metric" class="inp inp-sm" onchange="renderStaffTrend()" style="max-width:200px">
+          <option value="orderCount">Lượt Order</option>
+          <option value="orderTotal">Tiền Order</option>
+          <option value="checkoutCount">Lượt Thanh toán</option>
+          <option value="checkoutTotal" selected>Tiền Thanh toán</option>
+        </select>
+      </div>
+      <div style="position:relative;height:360px">
+        <canvas id="chart-staff-trend"></canvas>
+      </div>
+      <div id="staff-trend-note" style="font-size:11px;color:var(--text3);margin-top:8px;text-align:center;font-style:italic"></div>
+    </div>
   `;
+
+  // Vẽ trend (lazy load Chart.js)
+  loadChartJs().then(() => renderStaffTrend()).catch(e => console.warn('chartjs:', e));
+}
+
+// Palette cho từng NV
+const STAFF_TREND_PALETTE = [
+  '#c9a84c', '#3dbfa0', '#d4627a', '#7b72e9', '#6b9e5e',
+  '#4a9eff', '#e09a30', '#5a8fc9', '#e05a4e', '#88bb7a',
+  '#b8843d', '#9e97f5', '#f0849a', '#5ed9bc', '#f5b84a',
+];
+
+let _staffTrendChart = null;
+
+function renderStaffTrend() {
+  const ctx = document.getElementById('chart-staff-trend');
+  if (!ctx || !window.Chart) return;
+  if (_staffTrendChart) { _staffTrendChart.destroy(); _staffTrendChart = null; }
+
+  const metric = document.getElementById('staff-trend-metric')?.value || 'checkoutTotal';
+  const { rows, from, to } = _staffStatsCache;
+  if (!rows.length || !from || !to) return;
+
+  // Tạo dãy ngày liền mạch
+  const days = [];
+  let cur = new Date(from);
+  const end = new Date(to);
+  while (cur <= end) {
+    days.push(cur.toISOString().slice(0,10));
+    cur.setDate(cur.getDate()+1);
+    if (days.length > 366) break;
+  }
+  const displayLabels = days.map(d => d.slice(5));
+
+  // Gom theo NV → theo ngày
+  // structure: byStaff[email] = { name, days: { 'YYYY-MM-DD': {orderCount, orderTotal, checkoutCount, checkoutTotal} } }
+  const byStaff = {};
+  rows.forEach(r => {
+    const email = (r.StaffEmail||'').toLowerCase();
+    const day = String(r.Date||'').slice(0,10);
+    if (!email || !day) return;
+    if (!byStaff[email]) byStaff[email] = { name: r.StaffName || email, days: {} };
+    if (!byStaff[email].days[day]) byStaff[email].days[day] = { orderCount:0, orderTotal:0, checkoutCount:0, checkoutTotal:0 };
+    const d = byStaff[email].days[day];
+    const amt = Number(r.Amount||0);
+    if (r.Type === 'ORDER') { d.orderCount++; d.orderTotal += amt; }
+    else if (r.Type === 'CHECKOUT') { d.checkoutCount++; d.checkoutTotal += amt; }
+  });
+
+  // Sort NV theo tổng metric (cao xuống thấp), lấy top 10
+  const sorted = Object.entries(byStaff).map(([email, data]) => {
+    const total = days.reduce((s, day) => s + (data.days[day]?.[metric] || 0), 0);
+    return { email, name: data.name, days: data.days, total };
+  }).sort((a,b) => b.total - a.total);
+
+  const showCount = Math.min(sorted.length, 10);
+  const visible = sorted.slice(0, showCount);
+  const hidden = sorted.length - showCount;
+
+  // Update note
+  const noteEl = document.getElementById('staff-trend-note');
+  if (noteEl) {
+    const metricLabel = {
+      orderCount: 'Lượt Order',
+      orderTotal: 'Tiền Order',
+      checkoutCount: 'Lượt Thanh toán',
+      checkoutTotal: 'Tiền Thanh toán',
+    }[metric] || metric;
+    noteEl.textContent = hidden > 0
+      ? `Đang hiện ${showCount}/${sorted.length} NV top theo ${metricLabel} · ${hidden} NV còn lại đã ẩn`
+      : `Đang hiện ${sorted.length} NV theo ${metricLabel} · Bấm tên ở legend để ẩn/hiện`;
+  }
+
+  // Build datasets
+  const isMoney = metric === 'orderTotal' || metric === 'checkoutTotal';
+  const datasets = visible.map((s, i) => {
+    const color = STAFF_TREND_PALETTE[i % STAFF_TREND_PALETTE.length];
+    return {
+      label: s.name + ' (' + (isMoney ? fmtMoney(s.total) : s.total) + ')',
+      data: days.map(d => s.days[d]?.[metric] || 0),
+      borderColor: color,
+      backgroundColor: color + '22',
+      tension: 0.3,
+      borderWidth: 2,
+      pointRadius: 2,
+      pointHoverRadius: 5,
+    };
+  });
+
+  const text3 = getComputedStyle(document.documentElement).getPropertyValue('--text3').trim() || '#6b5f52';
+  const text2 = getComputedStyle(document.documentElement).getPropertyValue('--text2').trim() || '#b0a090';
+  const border = getComputedStyle(document.documentElement).getPropertyValue('--border').trim() || '#3a332c';
+  const cream = getComputedStyle(document.documentElement).getPropertyValue('--cream').trim() || '#f5ead8';
+
+  const fmtShort = (v) => {
+    if (v >= 1e6) return (v/1e6).toFixed(v >= 10e6 ? 0 : 1) + 'M';
+    if (v >= 1000) return Math.round(v/1000) + 'k';
+    return String(v||0);
+  };
+
+  _staffTrendChart = new Chart(ctx, {
+    type: 'line',
+    data: { labels: displayLabels, datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: {
+          position: 'top',
+          labels: { color: text2, boxWidth: 12, padding: 8, font: { size: 11 }, usePointStyle: true }
+        },
+        tooltip: {
+          mode: 'index',
+          intersect: false,
+          backgroundColor: 'rgba(20,16,12,.95)',
+          titleColor: cream,
+          bodyColor: cream,
+          padding: 10,
+          cornerRadius: 6,
+          filter: (item) => item.parsed.y > 0,
+          callbacks: {
+            label: (c) => {
+              const v = c.parsed.y;
+              return c.dataset.label.replace(/\s*\([^)]*\)$/, '') + ': ' + (isMoney ? fmtMoney(v) + ' ₫' : v);
+            }
+          }
+        }
+      },
+      scales: {
+        x: { ticks: { color: text3 }, grid: { color: border } },
+        y: {
+          ticks: { color: text3, precision: 0, callback: v => isMoney ? fmtShort(v) : v },
+          grid: { color: border },
+          beginAtZero: true
+        }
+      }
+    }
+  });
 }
 
 // Mở modal báo cáo cá nhân của 1 NV (đầy đủ chi tiết + tính lương)
