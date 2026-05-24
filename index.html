@@ -4933,14 +4933,15 @@ function invInFormExisting(it) {
         <div><span class="inv-lbl">Mã:</span> <strong>${escapeHTML(it.code)}</strong></div>
         <div><span class="inv-lbl">Tên:</span> <strong>${escapeHTML(it.name)}</strong></div>
         <div><span class="inv-lbl">Tồn hiện tại:</span> <strong style="color:var(--accent2)">${it.stock} ${escapeHTML(it.unit||'')}</strong></div>
-        <div><span class="inv-lbl">Giá nhập:</span> ${fmtMoney(it.price||0)} ₫</div>
-        <div><span class="inv-lbl">Ngưỡng cảnh báo:</span> <strong>${curLimit > 0 ? curLimit : '<span style="color:var(--text3)">chưa đặt</span>'}</strong></div>
+        ${isAdmin ? `<div><span class="inv-lbl">Giá nhập:</span> ${fmtMoney(it.price||0)} ₫</div>
+        <div><span class="inv-lbl">Ngưỡng cảnh báo:</span> <strong>${curLimit > 0 ? curLimit : '<span style="color:var(--text3)">chưa đặt</span>'}</strong></div>` : ''}
       </div>
       <div class="grid-2">
         <div class="field">
           <label>Số lượng nhập thêm</label>
           <input class="inp" id="inv-in-qty" type="number" min="0" step="any" inputmode="decimal" placeholder="0">
         </div>
+        ${isAdmin ? `
         <div class="field">
           <label>Giá nhập mới (tuỳ chọn)</label>
           <input class="inp" id="inv-in-price" type="number" min="0" placeholder="Để trống = giữ ${it.price||0}">
@@ -4948,8 +4949,8 @@ function invInFormExisting(it) {
         <div class="field">
           <label>⚠️ Ngưỡng cảnh báo mới (tuỳ chọn)</label>
           <input class="inp" id="inv-in-limit" type="number" min="0" step="any" placeholder="Để trống = giữ ${curLimit||0}">
-        </div>
-        <div class="field">
+        </div>` : ''}
+        <div class="field" ${isAdmin ? '' : 'style="grid-column:1/-1"'}>
           <label>Ghi chú</label>
           <input class="inp" id="inv-in-note" placeholder="VD: Nhập từ Coopmart">
         </div>
@@ -4983,6 +4984,7 @@ function invInFormNew(code) {
           <label>Đơn vị</label>
           <input class="inp" id="inv-in-unit" placeholder="lon / kg / gói / chai...">
         </div>
+        ${isAdmin ? `
         <div class="field">
           <label>Giá nhập (đ/đv)</label>
           <input class="inp" id="inv-in-price" type="number" min="0" placeholder="0">
@@ -4990,12 +4992,15 @@ function invInFormNew(code) {
         <div class="field">
           <label>⚠️ Ngưỡng cảnh báo (tồn ≤ ngưỡng = báo đỏ)</label>
           <input class="inp" id="inv-in-limit" type="number" min="0" step="any" placeholder="VD: 10">
-        </div>
+        </div>` : ''}
         <div class="field" style="grid-column:1/-1">
           <label>Ghi chú</label>
           <input class="inp" id="inv-in-note" placeholder="VD: NCC ABC">
         </div>
       </div>
+      ${!isAdmin ? `<div style="font-size:11px;color:var(--text3);margin-bottom:10px;font-style:italic">
+        💡 Giá nhập và ngưỡng cảnh báo sẽ do admin cập nhật sau.
+      </div>` : ''}
       <div class="form-actions">
         <button class="btn btn-outline" onclick="cancelInvForm()">Huỷ</button>
         <button class="btn btn-green" onclick="submitInvIn('', true)">✅ Tạo & nhập</button>
@@ -5018,8 +5023,6 @@ async function submitInvIn(code, isNew) {
     const name = (document.getElementById('inv-in-name').value||'').trim();
     const qty  = Number(document.getElementById('inv-in-qty').value||0);
     const unit = (document.getElementById('inv-in-unit').value||'').trim();
-    const price = Number(document.getElementById('inv-in-price').value||0);
-    const limit = Number(document.getElementById('inv-in-limit').value||0);
     const note = (document.getElementById('inv-in-note').value||'').trim();
     if (!newCode) return toast('Thiếu mã','err');
     if (!name) return toast('Thiếu tên hàng','err');
@@ -5028,17 +5031,33 @@ async function submitInvIn(code, isNew) {
     if (_invCache.items.some(it => (it.code||'').toUpperCase() === newCode)) {
       return toast('Mã này đã tồn tại, vui lòng tra trước','err');
     }
-    payload = { action:'inv_in', code:newCode, name, qty, unit, price, limit, note,
+    payload = { action:'inv_in', code:newCode, name, qty, unit, note,
                 staff:myName(), isNew:true };
+    // Chỉ admin gửi giá + ngưỡng (user không thấy 2 ô này)
+    if (isAdmin) {
+      const priceEl = document.getElementById('inv-in-price');
+      const limitEl = document.getElementById('inv-in-limit');
+      if (priceEl) payload.price = Number(priceEl.value||0);
+      if (limitEl) payload.limit = Number(limitEl.value||0);
+    } else {
+      // User tạo: mặc định price=0, limit=0 (admin set sau)
+      payload.price = 0;
+      payload.limit = 0;
+    }
   } else {
     const qty  = Number(document.getElementById('inv-in-qty').value||0);
-    const priceRaw = (document.getElementById('inv-in-price').value||'').trim();
-    const limitRaw = (document.getElementById('inv-in-limit').value||'').trim();
     const note = (document.getElementById('inv-in-note').value||'').trim();
     if (!qty || qty <= 0) return toast('Số lượng phải > 0','err');
     payload = { action:'inv_in', code, qty, note, staff:myName(), isNew:false };
-    if (priceRaw !== '') payload.price = Number(priceRaw);
-    if (limitRaw !== '') payload.limit = Number(limitRaw);
+    // Chỉ admin mới được gửi price + limit (user không thấy 2 ô này)
+    if (isAdmin) {
+      const priceEl = document.getElementById('inv-in-price');
+      const limitEl = document.getElementById('inv-in-limit');
+      const priceRaw = priceEl ? (priceEl.value||'').trim() : '';
+      const limitRaw = limitEl ? (limitEl.value||'').trim() : '';
+      if (priceRaw !== '') payload.price = Number(priceRaw);
+      if (limitRaw !== '') payload.limit = Number(limitRaw);
+    }
   }
   await sendInvAction(payload, '✅ Đã nhập kho');
 }
