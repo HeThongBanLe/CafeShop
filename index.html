@@ -305,6 +305,18 @@ tbody tr:hover td{background:rgba(255,255,255,.02)}
 .spinner-inline{display:inline-block;width:12px;height:12px;border:2px solid currentColor;border-top-color:transparent;border-radius:50%;animation:spin .8s linear infinite;vertical-align:-2px;margin-right:6px}
 .money-input{font-variant-numeric:tabular-nums;letter-spacing:.4px}
 .money-words{font-size:11px;color:var(--accent2);margin-top:3px;font-style:italic;min-height:14px;text-transform:capitalize}
+/* Guest Top bán chạy */
+.top-section-title{font-size:15px;font-weight:700;color:var(--accent2);padding:0 12px 10px;border-bottom:1px solid var(--border);margin-bottom:12px}
+.top-list{display:flex;flex-direction:column;gap:8px;padding:0 8px}
+.top-card{display:flex;align-items:center;gap:12px;padding:12px 14px;background:var(--surface);border:1px solid var(--border);border-radius:10px;transition:transform .15s}
+.top-card:active{transform:scale(.98)}
+.top-card-podium{background:linear-gradient(135deg,rgba(201,168,76,.10),rgba(201,168,76,.02));border-color:rgba(201,168,76,.35)}
+.top-medal{font-size:22px;min-width:34px;text-align:center;flex-shrink:0}
+.top-rank{display:inline-block;width:26px;height:26px;line-height:24px;text-align:center;border:1px solid var(--border);border-radius:50%;font-size:12px;color:var(--text3);font-weight:600}
+.top-name{flex:1;font-weight:600;font-size:14px;color:var(--text);word-break:break-word}
+.top-qty{text-align:right;flex-shrink:0}
+.top-qty strong{font-size:18px;color:var(--accent2);font-weight:700;display:block;line-height:1}
+.top-qty span{font-size:10px;color:var(--text3);text-transform:uppercase;letter-spacing:.5px}
 /* Permission toggle switch */
 .perm-toggle{display:inline-flex;align-items:center;gap:8px;cursor:pointer;user-select:none}
 .perm-toggle input{position:absolute;opacity:0;width:0;height:0;pointer-events:none}
@@ -391,9 +403,10 @@ tbody tr:hover td{background:rgba(255,255,255,.02)}
     <button class="btn btn-outline btn-sm" onclick="showLogin()">🔑 Nhân viên đăng nhập</button>
   </div>
   <!-- Tab điều hướng guest -->
-  <div style="display:flex;gap:4px;padding:12px 16px 0;border-bottom:1px solid var(--border);background:var(--surface)">
+  <div style="display:flex;gap:4px;padding:12px 16px 0;border-bottom:1px solid var(--border);background:var(--surface);overflow-x:auto">
     <div class="tab active" id="gtab-call" onclick="switchGuestTab('call')">🛎️ Gọi nhân viên</div>
     <div class="tab" id="gtab-menu" onclick="switchGuestTab('menu')">📋 Xem menu</div>
+    <div class="tab" id="gtab-top" onclick="switchGuestTab('top')">🔥 Top bán chạy</div>
   </div>
   <!-- Tab gọi nhân viên -->
   <div id="guest-tab-call" class="guest-body">
@@ -411,6 +424,10 @@ tbody tr:hover td{background:rgba(255,255,255,.02)}
   <!-- Tab menu -->
   <div id="guest-tab-menu" class="guest-body" style="display:none">
     <div id="guest-menu-content"><div class="spinner"></div></div>
+  </div>
+  <!-- Tab top bán chạy -->
+  <div id="guest-tab-top" class="guest-body" style="display:none">
+    <div id="guest-top-content"><div class="spinner"></div></div>
   </div>
 </div>
 
@@ -685,9 +702,12 @@ function showGuest() {
 function switchGuestTab(tab) {
   document.getElementById('gtab-call').className = 'tab' + (tab==='call'?' active':'');
   document.getElementById('gtab-menu').className = 'tab' + (tab==='menu'?' active':'');
+  document.getElementById('gtab-top').className  = 'tab' + (tab==='top' ?' active':'');
   document.getElementById('guest-tab-call').style.display = tab==='call' ? 'block' : 'none';
   document.getElementById('guest-tab-menu').style.display = tab==='menu' ? 'block' : 'none';
+  document.getElementById('guest-tab-top').style.display  = tab==='top'  ? 'block' : 'none';
   if (tab==='menu') renderGuestMenu();
+  else if (tab==='top') renderGuestTop();
 }
 
 let guestMenuActiveGroup = 'all';
@@ -792,6 +812,137 @@ function switchGuestMenuGroup(groupId) {
   // Scroll lên đầu khi đổi tab
   const area = document.getElementById('guest-tab-menu');
   if (area) area.scrollTop = 0;
+}
+
+// ═══════════ GUEST TOP BÁN CHẠY (30 ngày gần nhất) ═══════════
+let _guestTopCache = { data: null, ts: 0 };
+const GUEST_TOP_CACHE_MS = 10 * 60 * 1000; // 10 phút
+
+async function renderGuestTop() {
+  const area = document.getElementById('guest-top-content');
+  if (!area) return;
+
+  // Dùng cache nếu chưa hết hạn
+  if (_guestTopCache.data && (Date.now() - _guestTopCache.ts < GUEST_TOP_CACHE_MS)) {
+    drawGuestTop(_guestTopCache.data);
+    return;
+  }
+
+  area.innerHTML = '<div class="spinner"></div>';
+
+  try {
+    // Tính khoảng 30 ngày gần nhất
+    const today = new Date();
+    const from30 = new Date(today.getTime() - 29 * 86400000);
+    const fromDate = from30.toISOString().slice(0, 10);
+    const toDate = today.toISOString().slice(0, 10);
+
+    const res = await fetch('/api/sheet', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'read', fromDate, toDate })
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'Lỗi đọc dữ liệu');
+
+    // Aggregate: count quantity theo món
+    const itemMap = {};
+    const toppingMap = {};
+    (data.rows || []).forEach(r => {
+      const itemName = String(r.ItemName || '').trim();
+      const qty = Number(r.Qty || 0);
+      if (itemName && qty > 0) {
+        itemMap[itemName] = (itemMap[itemName] || 0) + qty;
+      }
+      // Toppings có thể là "Trân châu, Thạch dừa" comma-separated
+      const toppingsStr = String(r.Toppings || '').trim();
+      if (toppingsStr) {
+        toppingsStr.split(',').forEach(t => {
+          const tname = t.trim();
+          if (tname) toppingMap[tname] = (toppingMap[tname] || 0) + qty;
+        });
+      }
+    });
+
+    const topItems = Object.entries(itemMap)
+      .map(([name, qty]) => ({ name, qty }))
+      .sort((a, b) => b.qty - a.qty)
+      .slice(0, 10);
+
+    const topToppings = Object.entries(toppingMap)
+      .map(([name, qty]) => ({ name, qty }))
+      .sort((a, b) => b.qty - a.qty)
+      .slice(0, 10);
+
+    _guestTopCache = {
+      data: { topItems, topToppings, fromDate, toDate, totalOrders: data.rows?.length || 0 },
+      ts: Date.now()
+    };
+    drawGuestTop(_guestTopCache.data);
+  } catch (e) {
+    area.innerHTML = `
+      <div class="empty" style="padding:30px 16px">
+        <div style="font-size:14px;color:var(--text2);margin-bottom:8px">😅 Chưa tải được dữ liệu</div>
+        <div style="font-size:12px;color:var(--text3);margin-bottom:16px">${escapeHTML(e.message || 'Lỗi không xác định')}</div>
+        <button class="btn btn-outline btn-sm" onclick="_guestTopCache={data:null,ts:0};renderGuestTop()">🔄 Thử lại</button>
+      </div>
+    `;
+  }
+}
+
+function drawGuestTop(data) {
+  const area = document.getElementById('guest-top-content');
+  const { topItems, topToppings, fromDate, toDate } = data;
+
+  if (!topItems.length && !topToppings.length) {
+    area.innerHTML = `
+      <div class="empty" style="padding:30px 16px">
+        <div style="font-size:14px">Chưa có dữ liệu bán hàng trong 30 ngày qua</div>
+        <div style="font-size:11px;color:var(--text3);margin-top:6px">${fromDate} → ${toDate}</div>
+      </div>
+    `;
+    return;
+  }
+
+  const medal = (i) => i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `<span class="top-rank">${i+1}</span>`;
+
+  const itemsHtml = topItems.length ? topItems.map((it, i) => `
+    <div class="top-card ${i < 3 ? 'top-card-podium' : ''}">
+      <div class="top-medal">${medal(i)}</div>
+      <div class="top-name">${escapeHTML(it.name)}</div>
+      <div class="top-qty">
+        <strong>${it.qty}</strong>
+        <span>đã bán</span>
+      </div>
+    </div>
+  `).join('') : '<div class="empty">Chưa có dữ liệu</div>';
+
+  const toppingsHtml = topToppings.length ? topToppings.map((it, i) => `
+    <div class="top-card ${i < 3 ? 'top-card-podium' : ''}">
+      <div class="top-medal">${medal(i)}</div>
+      <div class="top-name">${escapeHTML(it.name)}</div>
+      <div class="top-qty">
+        <strong>${it.qty}</strong>
+        <span>lượt thêm</span>
+      </div>
+    </div>
+  `).join('') : '<div class="empty" style="padding:14px">Chưa có topping nào</div>';
+
+  area.innerHTML = `
+    <div style="font-size:12px;color:var(--text3);text-align:center;margin-bottom:16px;padding:0 8px">
+      📅 Dữ liệu 30 ngày gần nhất (${fromDate} → ${toDate})
+    </div>
+
+    <div class="top-section-title">🔥 Top 10 món bán chạy</div>
+    <div class="top-list">${itemsHtml}</div>
+
+    <div class="top-section-title" style="margin-top:22px">✨ Top 10 topping được chọn</div>
+    <div class="top-list">${toppingsHtml}</div>
+
+    <div style="text-align:center;margin-top:20px">
+      <button class="btn btn-outline btn-xs" onclick="_guestTopCache={data:null,ts:0};renderGuestTop()">🔄 Cập nhật</button>
+    </div>
+  `;
 }
 
 // ═══════════ GUEST PAGE ═══════════
