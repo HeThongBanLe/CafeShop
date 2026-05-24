@@ -1363,6 +1363,7 @@ function renderStaffList() {
         </td>
         <td style="display:flex;gap:4px;flex-wrap:wrap">
           <button class="btn btn-ghost btn-xs" onclick="openEditStaff('${s.id}')">✏️ Sửa</button>
+          <button class="btn btn-gold btn-xs" onclick="openSalaryConfig('${escapeAttr(s.email)}','${escapeAttr(s.fullName||s.email)}')">💰 Lương</button>
           ${isActive
             ? `<button class="btn btn-red btn-xs" onclick="deactivateStaff('${s.id}','${s.email}')">🚫 Khoá</button>`
             : `<button class="btn btn-green btn-xs" onclick="reactivateStaff('${s.id}','${s.email}')">✅ Mở khoá</button>`}
@@ -3181,7 +3182,121 @@ function renderStaffStatsTable() {
 }
 
 // Mở modal báo cáo cá nhân của 1 NV (đầy đủ chi tiết + tính lương)
-function openStaffReport(email) {
+// ─── CACHE LƯƠNG TOÀN BỘ NV ───
+let _salaryCache = { items: {}, loadedAt: 0 }; // key = email
+
+async function loadAllSalary(force) {
+  if (!force && (Date.now() - _salaryCache.loadedAt < 60000)) return _salaryCache.items;
+  try {
+    const res = await fetch('/api/sheet', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ action:'staff_salary_all' })
+    });
+    const data = await res.json();
+    if (data.ok) {
+      const map = {};
+      (data.items||[]).forEach(it => { map[(it.staffEmail||'').toLowerCase()] = it; });
+      _salaryCache = { items: map, loadedAt: Date.now() };
+    }
+  } catch(e) { console.warn('load salary:', e); }
+  return _salaryCache.items;
+}
+
+// ─── MODAL CẤU HÌNH LƯƠNG (admin set trước) ───
+async function openSalaryConfig(email, name) {
+  const emailLower = String(email||'').toLowerCase().trim();
+  const existing = (await loadAllSalary(true))[emailLower] || {};
+
+  document.getElementById('modal-wrap').innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this)closeSalaryConfig()">
+      <div class="modal" style="max-width:520px">
+        <div class="modal-title">
+          <span>💰 Cấu hình lương: ${escapeHTML(name)}</span>
+          <button class="modal-close" onclick="closeSalaryConfig()">✕</button>
+        </div>
+        <div style="font-size:12px;color:var(--text3);margin-bottom:12px">
+          Set lương cố định cho nhân viên này. Khi xuất báo cáo sẽ tự dùng cấu hình này để tính.
+        </div>
+        <div class="grid-2">
+          <div class="field">
+            <label>Lương cơ bản (đ)</label>
+            <input class="inp" id="cfg-base" type="number" min="0" placeholder="VD: 5000000"
+              value="${existing.baseSalary || ''}" inputmode="numeric">
+          </div>
+          <div class="field">
+            <label>Hoa hồng % doanh thu TT</label>
+            <input class="inp" id="cfg-pct" type="number" min="0" step="0.1" placeholder="VD: 2"
+              value="${existing.commissionPct || ''}" inputmode="decimal">
+          </div>
+          <div class="field">
+            <label>Thưởng / Phụ cấp (đ)</label>
+            <input class="inp" id="cfg-bonus" type="number" min="0" placeholder="0"
+              value="${existing.bonus || ''}" inputmode="numeric">
+          </div>
+          <div class="field">
+            <label>Khấu trừ (đ)</label>
+            <input class="inp" id="cfg-deduct" type="number" min="0" placeholder="0"
+              value="${existing.deduct || ''}" inputmode="numeric">
+          </div>
+        </div>
+        ${existing.updatedAt ? `
+        <div style="font-size:11px;color:var(--text3);margin-top:8px;text-align:right">
+          Cập nhật cuối: ${escapeHTML(String(existing.updatedAt).slice(0,16).replace('T',' '))}
+          ${existing.updatedBy ? '· bởi ' + escapeHTML(existing.updatedBy) : ''}
+        </div>` : ''}
+        <div class="modal-footer">
+          <button class="btn btn-outline" onclick="closeSalaryConfig()">Huỷ</button>
+          <button class="btn btn-gold" onclick="saveSalaryConfig('${escapeAttr(emailLower)}','${escapeAttr(name)}')">💾 Lưu vào Sheet</button>
+        </div>
+      </div>
+    </div>
+  `;
+  setTimeout(() => document.getElementById('cfg-base')?.focus(), 80);
+}
+
+function closeSalaryConfig() {
+  document.getElementById('modal-wrap').innerHTML = '';
+}
+
+async function saveSalaryConfig(email, name) {
+  const base = Number(document.getElementById('cfg-base').value||0);
+  const pct = Number(document.getElementById('cfg-pct').value||0);
+  const bonus = Number(document.getElementById('cfg-bonus').value||0);
+  const deduct = Number(document.getElementById('cfg-deduct').value||0);
+
+  // Disable buttons
+  const btns = document.querySelectorAll('.modal [onclick*="saveSalaryConfig"], .modal [onclick*="closeSalaryConfig"]');
+  const states = [];
+  btns.forEach(b => {
+    states.push({ el: b, html: b.innerHTML });
+    b.disabled = true;
+    if (b.classList.contains('btn-gold')) b.innerHTML = '<span class="spinner-inline"></span> Đang lưu...';
+    b.style.opacity = '0.6';
+  });
+
+  try {
+    const res = await fetch('/api/sheet', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        action: 'staff_salary_set',
+        staffEmail: email, staffName: name,
+        baseSalary: base, commissionPct: pct, bonus, deduct,
+        updatedBy: myName(),
+      })
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'Lỗi');
+    toast('💰 Đã lưu cấu hình lương', 'ok');
+    closeSalaryConfig();
+    await loadAllSalary(true);
+  } catch(e) {
+    toast('❌ ' + e.message, 'err');
+    states.forEach(s => { s.el.disabled = false; s.el.innerHTML = s.html; s.el.style.opacity = ''; });
+  }
+}
+
+// ─── BÁO CÁO NHÂN VIÊN (auto tính lương từ Sheet, không nhập lại) ───
+async function openStaffReport(email) {
   const { rows, from, to } = _staffStatsCache;
   const emailLower = String(email||'').toLowerCase();
   const myRows = rows.filter(r => (r.StaffEmail||'').toLowerCase() === emailLower);
@@ -3194,6 +3309,41 @@ function openStaffReport(email) {
   const checkoutTotal = checkouts.reduce((s,r)=>s+Number(r.Amount||0), 0);
   const avgCheckout = checkouts.length ? Math.round(checkoutTotal/checkouts.length) : 0;
 
+  // Tải config lương từ Sheet (đã cache)
+  const salaryMap = await loadAllSalary(false);
+  const sal = salaryMap[emailLower];
+  let salaryHtml;
+  if (sal) {
+    const commission = Math.round(checkoutTotal * Number(sal.commissionPct||0) / 100);
+    const total = Number(sal.baseSalary||0) + commission + Number(sal.bonus||0) - Number(sal.deduct||0);
+    salaryHtml = `
+      <div class="card" style="background:rgba(201,168,76,.06);border:1px solid var(--accent);margin-bottom:14px">
+        <div class="card-title">
+          <div class="card-title-left">💰 Bảng lương kỳ này</div>
+          <button class="btn btn-outline btn-xs" onclick="closeStaffReport();openSalaryConfig('${escapeAttr(emailLower)}','${escapeAttr(name)}')">⚙️ Sửa cấu hình</button>
+        </div>
+        <div id="sal-result" style="background:var(--bg2);border-radius:8px;padding:14px;font-size:13px;line-height:1.9">
+          <div style="display:flex;justify-content:space-between"><span>Lương cơ bản</span><strong>${fmtMoney(Number(sal.baseSalary||0))} ₫</strong></div>
+          <div style="display:flex;justify-content:space-between"><span>Hoa hồng (${sal.commissionPct||0}% × ${fmtMoney(checkoutTotal)})</span><strong style="color:var(--accent2)">+ ${fmtMoney(commission)} ₫</strong></div>
+          ${Number(sal.bonus||0) > 0 ? `<div style="display:flex;justify-content:space-between"><span>Thưởng / Phụ cấp</span><strong style="color:var(--accent2)">+ ${fmtMoney(sal.bonus)} ₫</strong></div>` : ''}
+          ${Number(sal.deduct||0) > 0 ? `<div style="display:flex;justify-content:space-between"><span>Khấu trừ</span><strong style="color:var(--red)">− ${fmtMoney(sal.deduct)} ₫</strong></div>` : ''}
+          <hr style="margin:10px 0;border:none;border-top:1px dashed var(--border)">
+          <div style="display:flex;justify-content:space-between;font-size:16px"><strong>TỔNG LƯƠNG</strong><strong style="color:var(--accent2);font-size:22px">${fmtMoney(total)} ₫</strong></div>
+        </div>
+      </div>`;
+  } else {
+    salaryHtml = `
+      <div class="card" style="background:rgba(220,53,69,.08);border:1px solid rgba(220,53,69,.4);margin-bottom:14px">
+        <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap">
+          <div>
+            <strong style="color:#ff6b7a">⚠️ Chưa cấu hình lương</strong>
+            <div style="font-size:12px;color:var(--text3);margin-top:2px">Bấm "Cấu hình lương" để set trước, rồi quay lại đây.</div>
+          </div>
+          <button class="btn btn-gold btn-sm" onclick="closeStaffReport();openSalaryConfig('${escapeAttr(emailLower)}','${escapeAttr(name)}')">💰 Cấu hình lương</button>
+        </div>
+      </div>`;
+  }
+
   document.getElementById('modal-wrap').innerHTML = `
     <div class="modal-overlay" onclick="if(event.target===this)closeStaffReport()">
       <div class="modal" style="max-width:720px;max-height:90vh;overflow-y:auto">
@@ -3204,8 +3354,10 @@ function openStaffReport(email) {
 
         <div id="staff-report-printable">
           <div style="text-align:center;margin-bottom:14px;padding-bottom:10px;border-bottom:2px solid var(--border)">
-            <div style="font-size:18px;font-weight:700;color:var(--accent2)">${escapeHTML(shopConfig.name||'CafeShop')}</div>
-            <div style="font-size:13px;color:var(--text3)">BÁO CÁO NHÂN VIÊN</div>
+            <div style="font-size:18px;font-weight:700;color:var(--accent2)">${escapeHTML(shopConfig.name || 'Quán cafe')}</div>
+            ${shopConfig.address ? `<div style="font-size:12px;color:var(--text3)">${escapeHTML(shopConfig.address)}</div>` : ''}
+            ${shopConfig.phone ? `<div style="font-size:12px;color:var(--text3)">SĐT: ${escapeHTML(shopConfig.phone)}</div>` : ''}
+            <div style="font-size:13px;color:var(--text3);margin-top:6px">BÁO CÁO NHÂN VIÊN</div>
             <div style="font-size:11px;color:var(--text3)">${from} → ${to}</div>
           </div>
 
@@ -3222,37 +3374,8 @@ function openStaffReport(email) {
             <div class="stat"><div class="stat-label">TB / đơn TT</div><div class="stat-val">${fmtMoney(avgCheckout)}</div><div class="stat-sub">đ/đơn</div></div>
           </div>
 
-          <!-- TÍNH LƯƠNG -->
-          <div class="card" style="background:rgba(201,168,76,.06);border:1px solid var(--accent);margin-bottom:14px">
-            <div class="card-title"><div class="card-title-left">💰 Tính lương</div></div>
-            <div class="grid-2">
-              <div class="field">
-                <label>Lương cơ bản (đ)</label>
-                <input class="inp" id="sal-base" type="number" min="0" placeholder="VD: 5000000"
-                  oninput="recalcSalary(${checkoutTotal})">
-              </div>
-              <div class="field">
-                <label>Hệ số nhân doanh thu TT (%)</label>
-                <input class="inp" id="sal-pct" type="number" min="0" step="0.1" placeholder="VD: 2 (= 2% × DTTT)"
-                  oninput="recalcSalary(${checkoutTotal})">
-              </div>
-              <div class="field">
-                <label>Thưởng / Phụ cấp khác (đ)</label>
-                <input class="inp" id="sal-bonus" type="number" min="0" placeholder="VD: 200000"
-                  oninput="recalcSalary(${checkoutTotal})">
-              </div>
-              <div class="field">
-                <label>Khấu trừ (đ)</label>
-                <input class="inp" id="sal-deduct" type="number" min="0" placeholder="VD: 0"
-                  oninput="recalcSalary(${checkoutTotal})">
-              </div>
-            </div>
-            <div id="sal-result" style="background:var(--bg2);border-radius:8px;padding:12px;font-size:13px;line-height:1.7;margin-top:8px;color:var(--text3)">
-              Nhập các thông số trên để tính lương
-            </div>
-          </div>
+          ${salaryHtml}
 
-          <!-- CHI TIẾT TỪNG ĐƠN -->
           <div class="card-title"><div class="card-title-left">📜 Chi tiết các đơn thanh toán</div></div>
           <div class="tbl-wrap" style="max-height:300px;overflow-y:auto">
             <table class="tbl-nowrap">
@@ -3274,7 +3397,7 @@ function openStaffReport(email) {
 
         <div class="modal-footer">
           <button class="btn btn-outline" onclick="closeStaffReport()">Đóng</button>
-          <button class="btn btn-gold" onclick="printStaffReport()">🖨 In báo cáo</button>
+          ${sal ? `<button class="btn btn-gold" onclick="printStaffReport('${escapeAttr(name)}','${from}','${to}', ${Number(sal.baseSalary||0)}, ${Number(sal.commissionPct||0)}, ${Number(sal.bonus||0)}, ${Number(sal.deduct||0)}, ${checkoutTotal})">🖨 In báo cáo</button>` : ''}
         </div>
       </div>
     </div>
@@ -3283,75 +3406,81 @@ function openStaffReport(email) {
 
 function closeStaffReport() {
   document.getElementById('modal-wrap').innerHTML = '';
-  // Dọn print style nếu còn
-  const ps = document.getElementById('staff-report-print-style');
-  if (ps) ps.remove();
 }
 
-// Tính lương real-time khi nhập
-function recalcSalary(checkoutTotal) {
-  const base = Number(document.getElementById('sal-base').value||0);
-  const pct = Number(document.getElementById('sal-pct').value||0);
-  const bonus = Number(document.getElementById('sal-bonus').value||0);
-  const deduct = Number(document.getElementById('sal-deduct').value||0);
-  const commission = Math.round(checkoutTotal * pct / 100);
-  const total = base + commission + bonus - deduct;
-  const html = `
-    <div style="display:flex;justify-content:space-between"><span>Lương cơ bản</span><strong>${fmtMoney(base)} ₫</strong></div>
-    <div style="display:flex;justify-content:space-between"><span>Hoa hồng (${pct}% × ${fmtMoney(checkoutTotal)})</span><strong style="color:var(--accent2)">+ ${fmtMoney(commission)} ₫</strong></div>
-    <div style="display:flex;justify-content:space-between"><span>Thưởng / Phụ cấp</span><strong style="color:var(--accent2)">+ ${fmtMoney(bonus)} ₫</strong></div>
-    <div style="display:flex;justify-content:space-between"><span>Khấu trừ</span><strong style="color:var(--red)">− ${fmtMoney(deduct)} ₫</strong></div>
-    <hr style="margin:8px 0;border:none;border-top:1px dashed var(--border)">
-    <div style="display:flex;justify-content:space-between;font-size:16px"><strong>TỔNG LƯƠNG</strong><strong style="color:var(--accent2);font-size:20px">${fmtMoney(total)} ₫</strong></div>
-  `;
-  document.getElementById('sal-result').innerHTML = html;
+// In báo cáo: dùng popup window riêng để chỉ in 1 trang, không lặp
+function printStaffReport(name, from, to, baseSalary, commissionPct, bonus, deduct, checkoutTotal) {
+  const commission = Math.round(checkoutTotal * commissionPct / 100);
+  const total = baseSalary + commission + bonus - deduct;
+  const shopName = shopConfig.name || 'Quán cafe';
+  const shopAddr = shopConfig.address || '';
+  const shopPhone = shopConfig.phone || '';
+  const today = new Date().toLocaleDateString('vi-VN');
+
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Bảng lương ${escapeHTML(name)}</title>
+<style>
+  @page { size: A4; margin: 18mm }
+  * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'DM Sans', Arial, sans-serif }
+  body { color: #000; background: #fff; font-size: 13px; line-height: 1.5 }
+  .shop { text-align: center; border-bottom: 2px solid #000; padding-bottom: 12px; margin-bottom: 18px }
+  .shop-name { font-size: 22px; font-weight: bold }
+  .shop-info { font-size: 12px; color: #555; margin-top: 4px }
+  h1 { font-size: 18px; text-align: center; margin: 14px 0 6px }
+  .sub { text-align: center; color: #555; font-size: 13px; margin-bottom: 18px }
+  table { width: 100%; border-collapse: collapse; margin-top: 12px }
+  td.label { padding: 8px 12px; border-bottom: 1px solid #ddd; width: 60% }
+  td.value { padding: 8px 12px; border-bottom: 1px solid #ddd; text-align: right; font-weight: 600 }
+  tr.total td { border-top: 2px solid #000; border-bottom: none; padding-top: 14px; font-size: 16px; font-weight: bold }
+  .footer { display: flex; justify-content: space-between; margin-top: 50px }
+  .sign { text-align: center; min-width: 180px }
+  .sign-line { margin-top: 60px; border-top: 1px solid #000; padding-top: 6px; font-size: 12px; color: #555 }
+  .ts { text-align: center; font-size: 11px; color: #777; margin-top: 24px }
+</style></head><body>
+  <div class="shop">
+    <div class="shop-name">${escapeHTML(shopName)}</div>
+    ${shopAddr ? `<div class="shop-info">${escapeHTML(shopAddr)}</div>` : ''}
+    ${shopPhone ? `<div class="shop-info">SĐT: ${escapeHTML(shopPhone)}</div>` : ''}
+  </div>
+
+  <h1>BẢNG LƯƠNG NHÂN VIÊN</h1>
+  <div class="sub">Nhân viên: <strong>${escapeHTML(name)}</strong> · Kỳ: <strong>${escapeHTML(from)}</strong> → <strong>${escapeHTML(to)}</strong></div>
+
+  <table>
+    <tr><td class="label">Lương cơ bản</td><td class="value">${fmtMoney(baseSalary)} đ</td></tr>
+    <tr><td class="label">Hoa hồng (${commissionPct}% × doanh thu TT ${fmtMoney(checkoutTotal)} đ)</td><td class="value">+ ${fmtMoney(commission)} đ</td></tr>
+    ${bonus > 0 ? `<tr><td class="label">Thưởng / Phụ cấp</td><td class="value">+ ${fmtMoney(bonus)} đ</td></tr>` : ''}
+    ${deduct > 0 ? `<tr><td class="label">Khấu trừ</td><td class="value">− ${fmtMoney(deduct)} đ</td></tr>` : ''}
+    <tr class="total"><td class="label">TỔNG LƯƠNG THỰC NHẬN</td><td class="value">${fmtMoney(total)} đ</td></tr>
+  </table>
+
+  <div class="footer">
+    <div class="sign">
+      <div>Người lập</div>
+      <div class="sign-line">${escapeHTML(myName())}</div>
+    </div>
+    <div class="sign">
+      <div>Nhân viên ký nhận</div>
+      <div class="sign-line">${escapeHTML(name)}</div>
+    </div>
+  </div>
+
+  <div class="ts">Xuất ngày ${today}</div>
+
+  <script>
+    // Auto-print 1 lần duy nhất khi load xong
+    window.onload = function() {
+      setTimeout(function(){ window.print(); }, 200);
+    };
+  </script>
+</body></html>`;
+
+  const w = window.open('', '_blank', 'width=800,height=900');
+  if (!w) return toast('Trình duyệt chặn popup. Cho phép popup để in.', 'err');
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
 }
 
-// In báo cáo: dùng cách @media print ẩn mọi thứ trừ #staff-report-printable
-function printStaffReport() {
-  // Tạo style chỉ in phần báo cáo
-  let ps = document.getElementById('staff-report-print-style');
-  if (ps) ps.remove();
-  ps = document.createElement('style');
-  ps.id = 'staff-report-print-style';
-  ps.textContent = `
-    @media print {
-      body * { visibility: hidden !important; }
-      #staff-report-printable, #staff-report-printable * { visibility: visible !important; }
-      #staff-report-printable {
-        position: absolute !important;
-        left: 0 !important; top: 0 !important;
-        width: 100% !important;
-        background: #fff !important;
-        color: #000 !important;
-        padding: 12mm !important;
-      }
-      #staff-report-printable .card,
-      #staff-report-printable .stat,
-      #staff-report-printable .tag,
-      #staff-report-printable .tbl-wrap,
-      #staff-report-printable table,
-      #staff-report-printable th,
-      #staff-report-printable td,
-      #staff-report-printable .inp,
-      #staff-report-printable input {
-        background: #fff !important;
-        color: #000 !important;
-        border-color: #ccc !important;
-      }
-      #staff-report-printable .inv-lbl,
-      #staff-report-printable .stat-label,
-      #staff-report-printable .stat-sub { color: #555 !important; }
-      #staff-report-printable button { display: none !important; }
-      #staff-report-printable input { border:1px solid #ccc !important; padding:2px 4px !important }
-      @page { size: A4; margin: 10mm }
-    }
-  `;
-  document.head.appendChild(ps);
-  setTimeout(() => {
-    window.print();
-  }, 100);
-}
 
 // Xoá log staff theo bộ lọc
 function confirmDeleteStaffStats() {
