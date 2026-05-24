@@ -1303,8 +1303,36 @@ function renderStaff() {
     <div class="card">
       <div class="card-title">👥 Danh sách nhân viên</div>
       <div id="staff-list-area"><div class="spinner"></div></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">
+        <div class="card-title-left">📊 KPI / Báo cáo nhân viên</div>
+        <button class="btn btn-red btn-xs" onclick="confirmDeleteStaffStats()" title="Xoá log theo bộ lọc đang chọn">🗑 Xoá log</button>
+      </div>
+      <div class="filter-bar">
+        <div class="field" style="margin-bottom:0">
+          <label>Từ ngày</label>
+          <input type="date" class="inp inp-sm" id="kpi-from" onchange="loadStaffStats()">
+        </div>
+        <div class="field" style="margin-bottom:0">
+          <label>Đến ngày</label>
+          <input type="date" class="inp inp-sm" id="kpi-to" onchange="loadStaffStats()">
+        </div>
+        <select id="kpi-staff" class="inp inp-sm" onchange="loadStaffStats()" style="min-width:160px">
+          <option value="">Tất cả nhân viên</option>
+        </select>
+        <button class="btn btn-gold btn-sm" onclick="loadStaffStats()">🔄 Tải</button>
+        <button class="btn btn-outline btn-sm" onclick="setKpiQuickRange('today')">Hôm nay</button>
+        <button class="btn btn-outline btn-sm" onclick="setKpiQuickRange('7d')">7 ngày</button>
+        <button class="btn btn-outline btn-sm" onclick="setKpiQuickRange('30d')">30 ngày</button>
+        <button class="btn btn-outline btn-sm" onclick="setKpiQuickRange('month')">Tháng này</button>
+      </div>
+      <div id="kpi-content"><div class="empty">Bấm "Tải" để xem báo cáo</div></div>
     </div>`;
   renderStaffList();
+  // Init filter mặc định: 7 ngày qua + populate dropdown
+  initStaffStatsFilter();
 }
 
 function renderStaffList() {
@@ -2414,6 +2442,16 @@ async function confirmCartDraft() {
     await logHistory(tableId, `Thêm: ${it.name}${it.size?' ('+it.size+')':''}${it.toppings&&it.toppings.length?' + '+it.toppings.join(','):''} × ${it.qty}`, sessionId);
   }
 
+  // KPI nhân viên: ghi log ORDER (background)
+  const orderTotal = cartDraft.reduce((s,it)=>s+it.price*it.qty, 0);
+  const orderItemCount = cartDraft.reduce((s,it)=>s+(it.qty||1), 0);
+  pushStaffStat({
+    type: 'ORDER',
+    tableNum, sessionId,
+    amount: orderTotal,
+    itemCount: orderItemCount
+  }).catch(e => console.warn('staff stat order:', e));
+
   // Gửi Telegram
   const header = isNewOrder
     ? `🆕 <b>${shopName} - Bàn ${tableNum}</b> có order mới`
@@ -2623,6 +2661,15 @@ async function doCheckout() {
   // ─── PUSH LÊN GOOGLE SHEET (background, không chặn UI) ───
   pushToSheet({ tableNum, sessionId, merged, total,
                 staffName: myName() }).catch(e => console.warn('sheet push fail:', e));
+
+  // KPI nhân viên: ghi log CHECKOUT (background)
+  const checkoutItemCount = merged.reduce((s,it)=>s+(it.qty||1), 0);
+  pushStaffStat({
+    type: 'CHECKOUT',
+    tableNum, sessionId,
+    amount: total,
+    itemCount: checkoutItemCount
+  }).catch(e => console.warn('staff stat checkout:', e));
 
   // Lưu ord để in (vì sau deleteDoc thì orders[tableId] mất)
   const ordSnapshot = JSON.parse(JSON.stringify(ord));
@@ -2993,6 +3040,413 @@ async function confirmClearHistory() {
   loadHistory();
 }
 
+// ═══════════════════════════════════════════
+// KPI NHÂN VIÊN
+// ═══════════════════════════════════════════
+let _staffStatsCache = { rows: [] };
+
+function initStaffStatsFilter() {
+  // Default: 7 ngày qua
+  const today = new Date().toISOString().slice(0,10);
+  const weekAgo = new Date(Date.now()-6*86400000).toISOString().slice(0,10);
+  document.getElementById('kpi-from').value = weekAgo;
+  document.getElementById('kpi-to').value = today;
+  // Populate dropdown nhân viên (gồm cả admin và tất cả staff)
+  const sel = document.getElementById('kpi-staff');
+  if (sel) {
+    const opts = ['<option value="">Tất cả nhân viên</option>'];
+    // Admin
+    opts.push(`<option value="${currentUser?.email||''}">${escapeHTML(myName())} (admin)</option>`);
+    // Staff list
+    staffList.forEach(s => {
+      opts.push(`<option value="${escapeHTML((s.email||'').toLowerCase())}">${escapeHTML(s.fullName||loginName(s.email))}</option>`);
+    });
+    sel.innerHTML = opts.join('');
+  }
+}
+
+function setKpiQuickRange(kind) {
+  const today = new Date();
+  let from = new Date();
+  if (kind === 'today') from = today;
+  else if (kind === '7d') from = new Date(Date.now()-6*86400000);
+  else if (kind === '30d') from = new Date(Date.now()-29*86400000);
+  else if (kind === 'month') from = new Date(today.getFullYear(), today.getMonth(), 1);
+  document.getElementById('kpi-from').value = from.toISOString().slice(0,10);
+  document.getElementById('kpi-to').value   = today.toISOString().slice(0,10);
+  loadStaffStats();
+}
+
+async function loadStaffStats() {
+  const from = document.getElementById('kpi-from').value;
+  const to   = document.getElementById('kpi-to').value;
+  const staffEmail = document.getElementById('kpi-staff').value;
+  if (!from || !to) return toast('Chọn khoảng ngày','err');
+
+  const area = document.getElementById('kpi-content');
+  area.innerHTML = '<div class="spinner"></div>';
+  try {
+    const res = await fetch('/api/sheet', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        action:'staff_read',
+        fromDate: from, toDate: to,
+        staffEmail: staffEmail || undefined
+      })
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'Lỗi đọc dữ liệu');
+    _staffStatsCache = { rows: data.rows||[], from, to };
+    renderStaffStatsTable();
+  } catch(e) {
+    area.innerHTML = `<div class="empty">❌ ${e.message}<br>Kiểm tra Apps Script đã deploy v8 chưa.</div>`;
+  }
+}
+
+function renderStaffStatsTable() {
+  const { rows, from, to } = _staffStatsCache;
+  const area = document.getElementById('kpi-content');
+  if (!rows.length) {
+    area.innerHTML = `<div class="empty">Không có dữ liệu trong khoảng ${from} → ${to}</div>`;
+    return;
+  }
+  // Gom theo email
+  const byStaff = {};
+  rows.forEach(r => {
+    const email = (r.StaffEmail||'').toLowerCase();
+    if (!byStaff[email]) {
+      byStaff[email] = {
+        email,
+        name: r.StaffName || email,
+        orderCount: 0, orderTotal: 0,
+        checkoutCount: 0, checkoutTotal: 0,
+      };
+    }
+    const amt = Number(r.Amount||0);
+    if (r.Type === 'ORDER') {
+      byStaff[email].orderCount++;
+      byStaff[email].orderTotal += amt;
+    } else if (r.Type === 'CHECKOUT') {
+      byStaff[email].checkoutCount++;
+      byStaff[email].checkoutTotal += amt;
+    }
+  });
+  const items = Object.values(byStaff).sort((a,b) => b.checkoutTotal - a.checkoutTotal);
+  // Tổng
+  const grandOrderCount = items.reduce((s,x)=>s+x.orderCount,0);
+  const grandOrderTotal = items.reduce((s,x)=>s+x.orderTotal,0);
+  const grandCheckCount = items.reduce((s,x)=>s+x.checkoutCount,0);
+  const grandCheckTotal = items.reduce((s,x)=>s+x.checkoutTotal,0);
+
+  area.innerHTML = `
+    <div class="stats-grid" style="margin-bottom:12px">
+      <div class="stat"><div class="stat-label">Tổng lượt Order</div><div class="stat-val">${grandOrderCount}</div><div class="stat-sub">${fmtMoney(grandOrderTotal)} ₫</div></div>
+      <div class="stat"><div class="stat-label">Tổng đơn Thanh toán</div><div class="stat-val" style="color:var(--accent2)">${grandCheckCount}</div><div class="stat-sub">${fmtMoney(grandCheckTotal)} ₫</div></div>
+      <div class="stat"><div class="stat-label">Số NV hoạt động</div><div class="stat-val">${items.length}</div><div class="stat-sub">${from} → ${to}</div></div>
+      <div class="stat"><div class="stat-label">TB / đơn TT</div><div class="stat-val">${grandCheckCount ? fmtMoney(Math.round(grandCheckTotal/grandCheckCount)) : 0}</div><div class="stat-sub">đ/đơn</div></div>
+    </div>
+
+    <div class="tbl-wrap">
+      <table class="tbl-nowrap">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Nhân viên</th>
+            <th style="text-align:right">Lượt Order</th>
+            <th style="text-align:right">Tiền Order</th>
+            <th style="text-align:right">Đơn TT</th>
+            <th style="text-align:right">Tiền TT</th>
+            <th style="text-align:right">TB/đơn TT</th>
+            <th style="text-align:center">Báo cáo</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${items.map((it,i) => `
+            <tr>
+              <td>${i+1}</td>
+              <td><strong>${escapeHTML(it.name)}</strong><div style="font-size:11px;color:var(--text3)">${escapeHTML(it.email)}</div></td>
+              <td style="text-align:right">${it.orderCount}</td>
+              <td style="text-align:right;color:var(--text3)">${fmtMoney(it.orderTotal)}</td>
+              <td style="text-align:right;font-weight:600;color:var(--accent2)">${it.checkoutCount}</td>
+              <td style="text-align:right;font-weight:700;color:var(--accent2)">${fmtMoney(it.checkoutTotal)}</td>
+              <td style="text-align:right;color:var(--text3)">${it.checkoutCount ? fmtMoney(Math.round(it.checkoutTotal/it.checkoutCount)) : 0}</td>
+              <td style="text-align:center"><button class="btn btn-outline btn-xs" onclick="openStaffReport('${escapeAttr(it.email)}')">📄 Mở</button></td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+// Mở modal báo cáo cá nhân của 1 NV (đầy đủ chi tiết + tính lương)
+function openStaffReport(email) {
+  const { rows, from, to } = _staffStatsCache;
+  const emailLower = String(email||'').toLowerCase();
+  const myRows = rows.filter(r => (r.StaffEmail||'').toLowerCase() === emailLower);
+  if (!myRows.length) return toast('Không có dữ liệu cho NV này','err');
+
+  const name = myRows[0].StaffName || email;
+  const orders = myRows.filter(r => r.Type === 'ORDER');
+  const checkouts = myRows.filter(r => r.Type === 'CHECKOUT');
+  const orderTotal = orders.reduce((s,r)=>s+Number(r.Amount||0), 0);
+  const checkoutTotal = checkouts.reduce((s,r)=>s+Number(r.Amount||0), 0);
+  const avgCheckout = checkouts.length ? Math.round(checkoutTotal/checkouts.length) : 0;
+
+  document.getElementById('modal-wrap').innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this)closeStaffReport()">
+      <div class="modal" style="max-width:720px;max-height:90vh;overflow-y:auto">
+        <div class="modal-title">
+          <span>📄 Báo cáo: ${escapeHTML(name)}</span>
+          <button class="modal-close" onclick="closeStaffReport()">✕</button>
+        </div>
+
+        <div id="staff-report-printable">
+          <div style="text-align:center;margin-bottom:14px;padding-bottom:10px;border-bottom:2px solid var(--border)">
+            <div style="font-size:18px;font-weight:700;color:var(--accent2)">${escapeHTML(shopConfig.name||'CafeShop')}</div>
+            <div style="font-size:13px;color:var(--text3)">BÁO CÁO NHÂN VIÊN</div>
+            <div style="font-size:11px;color:var(--text3)">${from} → ${to}</div>
+          </div>
+
+          <div class="inv-info-grid" style="margin-bottom:14px">
+            <div><span class="inv-lbl">Nhân viên:</span> <strong>${escapeHTML(name)}</strong></div>
+            <div><span class="inv-lbl">Email:</span> <strong>${escapeHTML(email)}</strong></div>
+            <div><span class="inv-lbl">Khoảng:</span> <strong>${from} → ${to}</strong></div>
+            <div><span class="inv-lbl">Ngày in:</span> <strong>${new Date().toLocaleDateString('vi-VN')}</strong></div>
+          </div>
+
+          <div class="stats-grid" style="margin-bottom:14px">
+            <div class="stat"><div class="stat-label">Lượt Order</div><div class="stat-val">${orders.length}</div><div class="stat-sub">${fmtMoney(orderTotal)} ₫</div></div>
+            <div class="stat"><div class="stat-label">Đơn Thanh toán</div><div class="stat-val" style="color:var(--accent2)">${checkouts.length}</div><div class="stat-sub">${fmtMoney(checkoutTotal)} ₫</div></div>
+            <div class="stat"><div class="stat-label">TB / đơn TT</div><div class="stat-val">${fmtMoney(avgCheckout)}</div><div class="stat-sub">đ/đơn</div></div>
+          </div>
+
+          <!-- TÍNH LƯƠNG -->
+          <div class="card" style="background:rgba(201,168,76,.06);border:1px solid var(--accent);margin-bottom:14px">
+            <div class="card-title"><div class="card-title-left">💰 Tính lương</div></div>
+            <div class="grid-2">
+              <div class="field">
+                <label>Lương cơ bản (đ)</label>
+                <input class="inp" id="sal-base" type="number" min="0" placeholder="VD: 5000000"
+                  oninput="recalcSalary(${checkoutTotal})">
+              </div>
+              <div class="field">
+                <label>Hệ số nhân doanh thu TT (%)</label>
+                <input class="inp" id="sal-pct" type="number" min="0" step="0.1" placeholder="VD: 2 (= 2% × DTTT)"
+                  oninput="recalcSalary(${checkoutTotal})">
+              </div>
+              <div class="field">
+                <label>Thưởng / Phụ cấp khác (đ)</label>
+                <input class="inp" id="sal-bonus" type="number" min="0" placeholder="VD: 200000"
+                  oninput="recalcSalary(${checkoutTotal})">
+              </div>
+              <div class="field">
+                <label>Khấu trừ (đ)</label>
+                <input class="inp" id="sal-deduct" type="number" min="0" placeholder="VD: 0"
+                  oninput="recalcSalary(${checkoutTotal})">
+              </div>
+            </div>
+            <div id="sal-result" style="background:var(--bg2);border-radius:8px;padding:12px;font-size:13px;line-height:1.7;margin-top:8px;color:var(--text3)">
+              Nhập các thông số trên để tính lương
+            </div>
+          </div>
+
+          <!-- CHI TIẾT TỪNG ĐƠN -->
+          <div class="card-title"><div class="card-title-left">📜 Chi tiết các đơn thanh toán</div></div>
+          <div class="tbl-wrap" style="max-height:300px;overflow-y:auto">
+            <table class="tbl-nowrap">
+              <thead><tr><th>Thời gian</th><th>Bàn</th><th>Loại</th><th style="text-align:right">Số món</th><th style="text-align:right">Tiền</th></tr></thead>
+              <tbody>
+                ${myRows.slice().reverse().map(r => `
+                  <tr>
+                    <td style="font-size:12px;color:var(--text3)">${escapeHTML(String(r.Timestamp||'').slice(0,16).replace('T',' '))}</td>
+                    <td><strong>${escapeHTML(r.TableNum||'-')}</strong></td>
+                    <td><span class="tag ${r.Type==='CHECKOUT'?'tag-green':'tag-gold'}">${r.Type==='CHECKOUT'?'💵 TT':'📝 Order'}</span></td>
+                    <td style="text-align:right">${r.ItemCount||0}</td>
+                    <td style="text-align:right;font-weight:600">${fmtMoney(r.Amount||0)}</td>
+                  </tr>
+                `).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="modal-footer">
+          <button class="btn btn-outline" onclick="closeStaffReport()">Đóng</button>
+          <button class="btn btn-gold" onclick="printStaffReport()">🖨 In báo cáo</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function closeStaffReport() {
+  document.getElementById('modal-wrap').innerHTML = '';
+  // Dọn print style nếu còn
+  const ps = document.getElementById('staff-report-print-style');
+  if (ps) ps.remove();
+}
+
+// Tính lương real-time khi nhập
+function recalcSalary(checkoutTotal) {
+  const base = Number(document.getElementById('sal-base').value||0);
+  const pct = Number(document.getElementById('sal-pct').value||0);
+  const bonus = Number(document.getElementById('sal-bonus').value||0);
+  const deduct = Number(document.getElementById('sal-deduct').value||0);
+  const commission = Math.round(checkoutTotal * pct / 100);
+  const total = base + commission + bonus - deduct;
+  const html = `
+    <div style="display:flex;justify-content:space-between"><span>Lương cơ bản</span><strong>${fmtMoney(base)} ₫</strong></div>
+    <div style="display:flex;justify-content:space-between"><span>Hoa hồng (${pct}% × ${fmtMoney(checkoutTotal)})</span><strong style="color:var(--accent2)">+ ${fmtMoney(commission)} ₫</strong></div>
+    <div style="display:flex;justify-content:space-between"><span>Thưởng / Phụ cấp</span><strong style="color:var(--accent2)">+ ${fmtMoney(bonus)} ₫</strong></div>
+    <div style="display:flex;justify-content:space-between"><span>Khấu trừ</span><strong style="color:var(--red)">− ${fmtMoney(deduct)} ₫</strong></div>
+    <hr style="margin:8px 0;border:none;border-top:1px dashed var(--border)">
+    <div style="display:flex;justify-content:space-between;font-size:16px"><strong>TỔNG LƯƠNG</strong><strong style="color:var(--accent2);font-size:20px">${fmtMoney(total)} ₫</strong></div>
+  `;
+  document.getElementById('sal-result').innerHTML = html;
+}
+
+// In báo cáo: dùng cách @media print ẩn mọi thứ trừ #staff-report-printable
+function printStaffReport() {
+  // Tạo style chỉ in phần báo cáo
+  let ps = document.getElementById('staff-report-print-style');
+  if (ps) ps.remove();
+  ps = document.createElement('style');
+  ps.id = 'staff-report-print-style';
+  ps.textContent = `
+    @media print {
+      body * { visibility: hidden !important; }
+      #staff-report-printable, #staff-report-printable * { visibility: visible !important; }
+      #staff-report-printable {
+        position: absolute !important;
+        left: 0 !important; top: 0 !important;
+        width: 100% !important;
+        background: #fff !important;
+        color: #000 !important;
+        padding: 12mm !important;
+      }
+      #staff-report-printable .card,
+      #staff-report-printable .stat,
+      #staff-report-printable .tag,
+      #staff-report-printable .tbl-wrap,
+      #staff-report-printable table,
+      #staff-report-printable th,
+      #staff-report-printable td,
+      #staff-report-printable .inp,
+      #staff-report-printable input {
+        background: #fff !important;
+        color: #000 !important;
+        border-color: #ccc !important;
+      }
+      #staff-report-printable .inv-lbl,
+      #staff-report-printable .stat-label,
+      #staff-report-printable .stat-sub { color: #555 !important; }
+      #staff-report-printable button { display: none !important; }
+      #staff-report-printable input { border:1px solid #ccc !important; padding:2px 4px !important }
+      @page { size: A4; margin: 10mm }
+    }
+  `;
+  document.head.appendChild(ps);
+  setTimeout(() => {
+    window.print();
+  }, 100);
+}
+
+// Xoá log staff theo bộ lọc
+function confirmDeleteStaffStats() {
+  if (!isAdmin) return toast('Chỉ admin được xoá log','err');
+  const from = document.getElementById('kpi-from')?.value || '';
+  const to   = document.getElementById('kpi-to')?.value || '';
+  const staffEmail = document.getElementById('kpi-staff')?.value || '';
+
+  // Đếm trước
+  let logs = [...(_staffStatsCache.rows || [])];
+  // Logs đã được filter theo from/to/email khi load -> count = logs.length
+  const count = logs.length;
+
+  if (count === 0) return toast('Không có log nào khớp bộ lọc để xoá','info');
+
+  const staffLabel = staffEmail
+    ? (document.getElementById('kpi-staff').options[document.getElementById('kpi-staff').selectedIndex]?.text || staffEmail)
+    : 'Tất cả nhân viên';
+
+  document.getElementById('modal-wrap').innerHTML = `
+    <div class="modal-overlay" onclick="if(event.target===this)closeStaffReport()">
+      <div class="modal" style="max-width:480px">
+        <div class="modal-title">
+          <span>🗑 Xoá log KPI nhân viên</span>
+          <button class="modal-close" onclick="closeStaffReport()">✕</button>
+        </div>
+        <div style="padding:8px 0">
+          <div style="font-size:14px;margin-bottom:12px">Xác nhận xoá <strong style="color:var(--red);font-size:18px">${count}</strong> dòng log?</div>
+          <div class="inv-info-grid">
+            <div><span class="inv-lbl">Từ:</span> <strong>${from || '(không giới hạn)'}</strong></div>
+            <div><span class="inv-lbl">Đến:</span> <strong>${to || '(không giới hạn)'}</strong></div>
+            <div><span class="inv-lbl">Nhân viên:</span> <strong>${escapeHTML(staffLabel)}</strong></div>
+            <div><span class="inv-lbl">Số dòng xoá:</span> <strong style="color:var(--red)">${count}</strong></div>
+          </div>
+          <div style="background:rgba(220,53,69,.12);border:1px solid rgba(220,53,69,.4);padding:10px 12px;border-radius:8px;margin:14px 0;font-size:13px;color:#ff6b7a">
+            ⚠️ <strong>KHÔNG THỂ HOÀN TÁC</strong> — log đã xoá sẽ mất vĩnh viễn.
+          </div>
+          <div class="field">
+            <label>Gõ "<strong>XOA</strong>" để xác nhận:</label>
+            <input class="inp" id="del-staff-confirm" placeholder="XOA" autocomplete="off"
+                   onkeydown="if(event.key==='Enter')doDeleteStaffStats()">
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-outline" onclick="closeStaffReport()">Huỷ</button>
+          <button class="btn btn-red" onclick="doDeleteStaffStats()">🗑 Xoá ${count} dòng</button>
+        </div>
+      </div>
+    </div>
+  `;
+  setTimeout(() => document.getElementById('del-staff-confirm')?.focus(), 80);
+}
+
+async function doDeleteStaffStats() {
+  const confirmText = (document.getElementById('del-staff-confirm')?.value||'').trim().toUpperCase();
+  if (confirmText !== 'XOA') return toast('Gõ "XOA" để xác nhận','err');
+
+  const from = document.getElementById('kpi-from')?.value || '';
+  const to   = document.getElementById('kpi-to')?.value || '';
+  const staffEmail = document.getElementById('kpi-staff')?.value || '';
+
+  const btns = document.querySelectorAll('.modal [onclick*="doDeleteStaffStats"], .modal [onclick*="closeStaffReport"]');
+  const states = [];
+  btns.forEach(b => {
+    states.push({ el: b, html: b.innerHTML, disabled: b.disabled });
+    b.disabled = true;
+    if (b.classList.contains('btn-red')) {
+      b.innerHTML = '<span class="spinner-inline"></span> Đang xoá...';
+    }
+    b.style.opacity = '0.6';
+  });
+
+  try {
+    const res = await fetch('/api/sheet', {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        action:'staff_log_delete',
+        fromDate: from, toDate: to,
+        staffEmail: staffEmail || undefined
+      })
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'Lỗi');
+    toast(`✅ Đã xoá ${data.deleted||0} dòng`,'ok');
+    closeStaffReport();
+    await loadStaffStats();
+  } catch(e) {
+    toast('❌ '+e.message,'err');
+    states.forEach(s => {
+      try { s.el.disabled = s.disabled; s.el.innerHTML = s.html; s.el.style.opacity = ''; } catch(err){}
+    });
+  }
+}
+
 async function confirmClearNotifications() {
   if (!confirm('Xoá toàn bộ thông báo khách trong Firebase?')) return;
   toast('Đang xoá...','info');
@@ -3030,6 +3484,28 @@ async function pushToSheet({ tableNum, sessionId, merged, total, staffName }) {
   const data = await res.json();
   if (!data.ok) throw new Error(data.error || 'Sheet push failed');
   return data;
+}
+
+// Ghi log KPI cho nhân viên (ORDER hoặc CHECKOUT) — chạy background, không chặn UI
+async function pushStaffStat({ type, tableNum, sessionId, amount, itemCount }) {
+  try {
+    await fetch('/api/sheet', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'staff_log',
+        type, // 'ORDER' hoặc 'CHECKOUT'
+        staffEmail: (currentUser?.email || '').toLowerCase(),
+        staffName: myName(),
+        tableNum: String(tableNum || ''),
+        sessionId: String(sessionId || ''),
+        amount: Number(amount || 0),
+        itemCount: Number(itemCount || 0),
+      })
+    });
+  } catch(e) {
+    console.warn('staff stat push failed:', e);
+  }
 }
 
 // Load Chart.js dynamic (chỉ khi vào tab Data)
