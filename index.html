@@ -491,30 +491,92 @@ let localQtyChanges = {}; // { tableId: { key: newQty } } - thay đổi +/- chư
 
 // Theme presets - mỗi theme đổi cả accent VÀ background, surface, border
 const THEMES = [
-  { name:'Cafe Vàng', accent:'#c9a84c', accent2:'#e8c96a',
-    bg:'#0f0d0b', surface:'#1a1714', surface2:'#231f1b', surface3:'#2e2924',
-    border:'#3a332c', text:'#f0e6d3', text2:'#b0a090', text3:'#6b5f52', cream:'#f5ead8' },
+  // ─── 4 BỘ CỐT LÕI (giữ lại) ───
   { name:'Ocean Teal', accent:'#3dbfa0', accent2:'#5ed9bc',
     bg:'#0a1419', surface:'#0f1e26', surface2:'#152b35', surface3:'#1e3b48',
     border:'#244553', text:'#e0eef2', text2:'#90b0bc', text3:'#5a7a86', cream:'#d8ecef' },
   { name:'Rose Pink', accent:'#d4627a', accent2:'#f0849a',
     bg:'#15090e', surface:'#21121a', surface2:'#2c1822', surface3:'#3a212e',
     border:'#4a2a3a', text:'#f0d8df', text2:'#b89aa3', text3:'#7a5e68', cream:'#f5e0e6' },
-  { name:'Indigo Tím', accent:'#7b72e9', accent2:'#9e97f5',
-    bg:'#0d0b1a', surface:'#161226', surface2:'#1f1a35', surface3:'#2a2447',
-    border:'#352c5c', text:'#e6e1f5', text2:'#a39ec2', text3:'#6a6588', cream:'#ece8f8' },
   { name:'Light Cream', accent:'#b8843d', accent2:'#d4a05a',
     bg:'#faf5ec', surface:'#ffffff', surface2:'#f3ecdb', surface3:'#e8dec5',
     border:'#d4c8a8', text:'#3a2e1a', text2:'#6b5a3a', text3:'#9e8a65', cream:'#5c4a2a' },
-  { name:'Sage Xanh', accent:'#6b9e5e', accent2:'#88bb7a',
-    bg:'#0d130b', surface:'#161e12', surface2:'#1d281a', surface3:'#283525',
-    border:'#36452f', text:'#e0eadb', text2:'#9aaa90', text3:'#62725a', cream:'#dde7d6' },
   { name:'Midnight', accent:'#4a9eff', accent2:'#6db4ff',
     bg:'#080b14', surface:'#0e1320', surface2:'#161d2e', surface3:'#1f2940',
     border:'#2a3550', text:'#dde6f5', text2:'#8a98b3', text3:'#5a6680', cream:'#e5edf8' },
-  { name:'Amber Cam', accent:'#e09a30', accent2:'#f5b84a',
-    bg:'#140d05', surface:'#1f160a', surface2:'#2a1e10', surface3:'#382916',
-    border:'#48381d', text:'#f5e4cc', text2:'#bda280', text3:'#7a6850', cream:'#f8ecd6' },
+
+  // ─── NỮ TÍNH / CÔNG CHÚA / BABY (6) ───
+  { name:'🌸 Sakura', accent:'#e87aa0', accent2:'#f5a3c0',
+    bg:'#fff5f8', surface:'#ffffff', surface2:'#fde6ee', surface3:'#f9d2e0',
+    border:'#f0bdd0', text:'#5a2840', text2:'#8a4e68', text3:'#b07e95', cream:'#7a3a55' },
+  { name:'💜 Lavender', accent:'#9b7ed4', accent2:'#b89ee8',
+    bg:'#faf7ff', surface:'#ffffff', surface2:'#f0e8fa', surface3:'#e4d6f3',
+    border:'#d3c2eb', text:'#3d2a5c', text2:'#6a5485', text3:'#9786af', cream:'#5a4178' },
+  { name:'🍑 Peach Cream', accent:'#e89270', accent2:'#f4a988',
+    bg:'#fff5ee', surface:'#ffffff', surface2:'#fde5d6', surface3:'#f8d2bd',
+    border:'#f0bfa6', text:'#5a3320', text2:'#8a5a44', text3:'#b08a72', cream:'#7a4530' },
+  { name:'🦄 Unicorn', accent:'#c879d4', accent2:'#dfa0e8',
+    bg:'#fdf5ff', surface:'#ffffff', surface2:'#f7e5fb', surface3:'#eed0f5',
+    border:'#dcb8e8', text:'#4a1a55', text2:'#7a4080', text3:'#a070a8', cream:'#6a2575' },
+  { name:'🫐 Blueberry Milk', accent:'#7a92d4', accent2:'#9eb0e8',
+    bg:'#f5f7ff', surface:'#ffffff', surface2:'#e5ecfb', surface3:'#d2def5',
+    border:'#b8c8e8', text:'#1f2a55', text2:'#475588', text3:'#7080a8', cream:'#2a3a75' },
+  { name:'🌷 Tulip', accent:'#e0588c', accent2:'#f088b0',
+    bg:'#fff5f9', surface:'#ffffff', surface2:'#fde0eb', surface3:'#f8c6d8',
+    border:'#eeb0c5', text:'#5a1535', text2:'#883860', text3:'#a8688a', cream:'#7a204a' },
+
+  // ─── CÁ TÍNH / MẠNH MẼ / NĂNG ĐỘNG (5) ───
+  { name:'🔥 Sunset Fire', accent:'#ff5e3a', accent2:'#ff8a5c',
+    bg:'#0d0707', surface:'#1a0e0c', surface2:'#241511', surface3:'#321d17',
+    border:'#4a2820', text:'#ffe8d8', text2:'#d4a08a', text3:'#8f6855', cream:'#ffd4b8' },
+  { name:'💚 Neon Cyber', accent:'#00ff9f', accent2:'#5effc0',
+    bg:'#050a0a', surface:'#0a1414', surface2:'#0f1f1f', surface3:'#152d2d',
+    border:'#1f4040', text:'#d0fff0', text2:'#7ab5a8', text3:'#4a7770', cream:'#a8ffd0' },
+  { name:'⚡ Electric Purple', accent:'#b537f2', accent2:'#cc5dff',
+    bg:'#0a0612', surface:'#150a22', surface2:'#1e1232', surface3:'#2a1a47',
+    border:'#3a2560', text:'#e8d4ff', text2:'#a98ad0', text3:'#6f578f', cream:'#d4b0ff' },
+  { name:'🩸 Blood Moon', accent:'#e63946', accent2:'#ff5c6a',
+    bg:'#0a0506', surface:'#170a0d', surface2:'#231013', surface3:'#33181c',
+    border:'#4a242a', text:'#f5d8dc', text2:'#c08a92', text3:'#7a5560', cream:'#f0b8c0' },
+  { name:'🌊 Tropical Storm', accent:'#06d6a0', accent2:'#42e8b8',
+    bg:'#04141a', surface:'#0a1f28', surface2:'#102e3a', surface3:'#1a4250',
+    border:'#235565', text:'#cdf2e8', text2:'#7eaba0', text3:'#4f7770', cream:'#a8e8d0' },
+
+  // ─── TRANG TRỌNG / SANG TRỌNG (4) ───
+  { name:'👑 Royal Wine', accent:'#d4af37', accent2:'#e8c75a',
+    bg:'#0a0608', surface:'#180c10', surface2:'#22121a', surface3:'#311a25',
+    border:'#4a2638', text:'#f0dccc', text2:'#b89a85', text3:'#7a6555', cream:'#e8c896' },
+  { name:'🖤 Onyx Gold', accent:'#c9a55c', accent2:'#dec07a',
+    bg:'#080808', surface:'#121212', surface2:'#1c1c1c', surface3:'#282828',
+    border:'#3a3a3a', text:'#e8e0d0', text2:'#a89e88', text3:'#6e6450', cream:'#d8c898' },
+  { name:'🪵 Espresso', accent:'#a87f4e', accent2:'#c49968',
+    bg:'#100a07', surface:'#1d1410', surface2:'#291c15', surface3:'#38271c',
+    border:'#4a3525', text:'#ecdcc4', text2:'#b09780', text3:'#766050', cream:'#e0c89c' },
+  { name:'🍷 Bordeaux', accent:'#8b1538', accent2:'#b03d5e',
+    bg:'#0b0307', surface:'#16080c', surface2:'#1f0d12', surface3:'#2d141c',
+    border:'#3f1f2a', text:'#f0d4dc', text2:'#b08a96', text3:'#785560', cream:'#d8a0b0' },
+
+  // ─── TRUNG TÍNH / TỐI GIẢN (3) ───
+  { name:'🌫️ Mist Gray', accent:'#7a8a99', accent2:'#9ba8b5',
+    bg:'#f5f7f9', surface:'#ffffff', surface2:'#e8ecef', surface3:'#d8dde2',
+    border:'#c0c8d0', text:'#2a3340', text2:'#5a6470', text3:'#8a949e', cream:'#3a4555' },
+  { name:'🍃 Mint Fresh', accent:'#5cb89a', accent2:'#7ed1b5',
+    bg:'#f4faf7', surface:'#ffffff', surface2:'#e2f0ea', surface3:'#cee3da',
+    border:'#b5d0c4', text:'#1d4a3a', text2:'#487060', text3:'#7a988a', cream:'#2a5c4a' },
+  { name:'📜 Vintage Paper', accent:'#9c6b3a', accent2:'#b8854a',
+    bg:'#f5ecd8', surface:'#fff8e5', surface2:'#ece0c4', surface3:'#decfa8',
+    border:'#c4b48a', text:'#3a2818', text2:'#6a5238', text3:'#9a8260', cream:'#5a3f20' },
+
+  // ─── ĐỘC ĐÁO / VUI VẺ (3) ───
+  { name:'🌈 Pastel Rainbow', accent:'#ff8fa8', accent2:'#ffa8c0',
+    bg:'#fffaf5', surface:'#ffffff', surface2:'#fdebee', surface3:'#f7d8e0',
+    border:'#e8c0c8', text:'#3a2840', text2:'#6a4868', text3:'#9a7090', cream:'#5a3855' },
+  { name:'🍵 Matcha', accent:'#8ab055', accent2:'#a8c878',
+    bg:'#f6f7e8', surface:'#ffffff', surface2:'#eaf0d0', surface3:'#dae5b0',
+    border:'#bccb8c', text:'#2a3818', text2:'#556a3a', text3:'#80955f', cream:'#3a4a20' },
+  { name:'🌙 Galaxy', accent:'#a78bfa', accent2:'#c4a8ff',
+    bg:'#070418', surface:'#0e0a28', surface2:'#161038', surface3:'#221855',
+    border:'#322270', text:'#e0d5ff', text2:'#9a8acc', text3:'#5e5288', cream:'#c0a8ff' },
 ];
 const ACCENTS = THEMES; // backward compat
 
@@ -1461,7 +1523,7 @@ function renderConfig() {
         <div class="field" style="display:flex;align-items:flex-end;padding-bottom:14px">
           <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
             <input type="checkbox" id="cfg-guest" ${shopConfig.guestEnabled?'checked':''} style="width:16px;height:16px;accent-color:var(--accent)">
-            <span style="font-size:13px;color:var(--text)">Cho phép khách tự order</span>
+            <span style="font-size:13px;color:var(--text)">Cho phép khách gọi nhân viên</span>
           </label>
         </div>
       </div>
@@ -5973,13 +6035,8 @@ async function startScannerWithFacing(facing) {
       _qrTrack = videoEl.srcObject.getVideoTracks()[0];
       const caps = _qrTrack.getCapabilities ? _qrTrack.getCapabilities() : {};
 
-      // ZOOM: thử zoom 2x cho mã to ra
-      if (caps.zoom) {
-        try {
-          const targetZoom = Math.min(2.0, caps.zoom.max || 2.0);
-          await _qrTrack.applyConstraints({ advanced: [{ zoom: targetZoom }] });
-        } catch(e) { console.warn('zoom apply:', e); }
-      }
+      // ZOOM: KHÔNG tự ép zoom — để mặc định 1x cho user thấy rộng.
+      // Nếu cần zoom gần, user bấm nút + trong UI scanner (đã có sẵn).
 
       // FOCUS: bật continuous autofocus
       if (caps.focusMode && caps.focusMode.includes('continuous')) {
